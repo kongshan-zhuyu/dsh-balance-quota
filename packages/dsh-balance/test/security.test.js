@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OFFICIAL_PROVIDER_IDS, isOfficialProvider, refreshDue, validateProvider, readJsonPath, readJsonPathExpr, redactProvider, resolveBinding } from "../lib/host/index.js";
+import { OFFICIAL_PROVIDER_IDS, formatProviderError, isOfficialProvider, refreshDue, validateProvider, readJsonPath, readJsonPathExpr, redactProvider, resolveBinding } from "../lib/host/index.js";
 import { balanceCredentialRef, credentialRefForProvider, ownsCredential } from "../lib/host/security.js";
 
 test("rejects insecure or local endpoints", async () => {
@@ -76,6 +76,13 @@ test("refreshDue follows each provider query interval", () => {
   assert.equal(refreshDue(provider, "2025-01-01T00:00:00.000Z", Date.parse("2025-01-01T00:30:00.000Z")), true);
   assert.equal(refreshDue(provider, "not-a-date", Date.parse("2025-01-01T00:00:00.000Z")), true);
   assert.equal(refreshDue({ queryIntervalMinutes: 0 }, "2025-01-01T00:00:00.000Z", Date.parse("2025-01-01T00:00:01.000Z")), true);
+});
+test("provider HTTP errors preserve safe response details", () => {
+  assert.equal(formatProviderError(403, JSON.stringify({ error: { message: "API key is not allowed for this endpoint" } })), "供应商返回 HTTP 403：API key is not allowed for this endpoint");
+  assert.equal(formatProviderError(401, "invalid credentials"), "供应商返回 HTTP 401：invalid credentials");
+  const safe = formatProviderError(403, JSON.stringify({ message: "Bearer secret-token api_key=raw-secret" }));
+  assert.equal(safe, "供应商返回 HTTP 403：Bearer [redacted] api_key=[redacted]");
+  assert.ok(formatProviderError(500, "x".repeat(1000)).length <= 260);
 });
 test("binding resolves an exact route first, then the provider prefix", () => {
   const config = { bindings: { "deepseek/deepseek-chat": "relay-a", "openai": "relay-b" } };

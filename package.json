@@ -9,10 +9,14 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node scripts/check.mjs",
-    "test": "node --test packages/dsh-host-balance/lib/security.test.js packages/dsh-balance/test/security.test.js",
+    "check": "node scripts/check.mjs && node scripts/release-check.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "test": "node --test packages/dsh-host-balance/lib/security.test.js packages/dsh-balance/test/security.test.js packages/dsh-balance/test/external-status.test.js",
     "pack:check": "node scripts/pack-check.mjs",
     "dev:install": "node scripts/install.mjs",
     "verify": "pnpm check && pnpm test && pnpm pack:check"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
   }
 }
