@@ -7,7 +7,18 @@ const files = [
   "packages/dsh-balance/lib/index.js",
   "packages/dsh-balance/lib/host/index.js",
   "packages/dsh-balance/lib/host/security.js",
+  "packages/dsh-balance/lib/host/net.js",
+  "packages/dsh-balance/lib/host/http-utils.js",
+  "packages/dsh-balance/lib/host/json-path.js",
+  "packages/dsh-balance/lib/host/presets.js",
+  "packages/dsh-balance/lib/host/validate.js",
+  "packages/dsh-balance/lib/host/config-store.js",
+  "packages/dsh-balance/lib/host/external-status.js",
+  "packages/dsh-balance/lib/host/external-preview-cache.js",
+  "packages/dsh-balance/lib/host/query.js",
+  "packages/dsh-balance/lib/host/routes.js",
   "packages/dsh-balance/lib/client.js",
+  "packages/dsh-balance/lib/client/client.js",
 ];
 
 for (const file of files) {

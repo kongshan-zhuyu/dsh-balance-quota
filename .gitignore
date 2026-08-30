@@ -6,3 +6,5 @@ config.local.json
 *.key
 artifacts/
 *.tgz
+.codegraph/
+.dsh-vision-toolkit/

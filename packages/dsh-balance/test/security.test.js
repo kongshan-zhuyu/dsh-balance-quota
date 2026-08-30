@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { OFFICIAL_PROVIDER_IDS, formatProviderError, isOfficialProvider, refreshDue, validateProvider, readJsonPath, readJsonPathExpr, redactProvider, resolveBinding } from "../lib/host/index.js";
 import { balanceCredentialRef, credentialRefForProvider, ownsCredential } from "../lib/host/security.js";
+import { summary } from "../lib/host/query.js";
 
 test("rejects insecure or local endpoints", async () => {
   await assert.rejects(() => validateProvider({ id: "a", name: "a", endpoint: "http://example.com", responsePath: "$.balance" }));
@@ -13,6 +14,17 @@ test("allows a normal HTTPS provider and only safe JSON paths", async () => {
   assert.equal(readJsonPath({ data: { balance: 12 } }, "$.data.balance"), 12);
   assert.throws(() => readJsonPath({}, "$['constructor']"));
   assert.equal(redactProvider({ ...p, apiKey: "never" }).apiKey, undefined);
+  assert.equal(p.balanceEnabled, true);
+});
+
+test("disabled balance monitoring skips credentials and external requests", async () => {
+  const provider = await validateProvider({ id: "disabled", name: "Disabled", endpoint: "https://example.com/balance", responsePath: "$.balance", balanceEnabled: false });
+  let credentialReads = 0;
+  const credentials = { resolve: async () => { credentialReads += 1; throw new Error("must not resolve credentials"); } };
+  const result = await summary({ providers: [provider], bindings: {} }, undefined, credentials, true, provider.id);
+  assert.deepEqual(result, [{ id: "disabled", name: "Disabled", status: "disabled" }]);
+  assert.equal(credentialReads, 0);
+  assert.equal(refreshDue(provider, undefined), false);
 });
 test("path expressions support ?? fallback chains, optional chaining, and the response alias", () => {
   const data = { balance: 0.28, quota: { remaining: 5, unit: "CNY" } };
@@ -63,6 +75,7 @@ test("official presets are limited to verified official balance and quota APIs",
   assert.deepEqual(OFFICIAL_PROVIDER_IDS, ["deepseek", "opencode-go"]);
   const deepseek = await validateProvider({ id: "deepseek", name: "DeepSeek", preset: "deepseek", credentialRef: "DEEPSEEK_API_KEY" });
   assert.equal(deepseek.endpoint, "https://api.deepseek.com/user/balance");
+  assert.equal(deepseek.balanceEnabled, true);
   assert.equal(isOfficialProvider(deepseek), true);
   const opencode = await validateProvider({ id: "opencode-go", name: "OpenCode Go", preset: "opencode-go", credentialRef: "OPENCODE_API_KEY" });
   assert.equal(opencode.usageWindows.length, 3);

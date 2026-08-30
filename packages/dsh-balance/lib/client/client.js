@@ -1,38 +1,185 @@
 window.__ModuleLoader__.load({
   id: "dsh-balance-quota",
   factory: (require) => {
-    const module = { exports: {} }; const exports = module.exports;
-    const React = require("react"); const h = React.createElement;
+    const module = { exports: {} };
+    const exports = module.exports;
+    const React = require("react");
+    const h = React.createElement;
     const inject = ["slots", "connection", "sessions"];
-    const state = { selectedProviderId: null, providers: [], config: null, timer: null, clock: null, bar: null, style: null, provider: null, connection: null, sessions: null, sessionsUnsubscribe: null, sessionId: null, requestGeneration: 0, refreshingProviderId: null, dockListeners: new Set() };
+
+    const state = {
+      selectedProviderId: null,
+      providers: [],
+      config: null,
+      timer: null,
+      clock: null,
+      bar: null,
+      style: null,
+      provider: null,
+      connection: null,
+      sessions: null,
+      sessionsUnsubscribe: null,
+      sessionId: null,
+      requestGeneration: 0,
+      refreshingProviderId: null,
+      healthModal: null,
+      healthRequestGeneration: 0,
+      llmSettingsSnapshot: null,
+      llmSettingsPromise: null,
+      dockListeners: new Set()
+    };
+
     const selectionKey = (sessionId) => `dsh-balance-quota:selected-provider:${sessionId || "global"}`;
     const OFFICIAL_PRESETS = new Set(["deepseek", "opencode-go"]);
-    const refreshDue = (provider, syncedAt, now = Date.now()) => { const interval = Number(provider?.queryIntervalMinutes ?? 30); const synced = Date.parse(syncedAt || ""); return !Number.isFinite(interval) || interval <= 0 || !Number.isFinite(synced) || now - synced >= interval * 60_000; };
-    const resolveSelectedProvider = (providers, sessionId, defaultProviderId) => { const manual = sessionStorage.getItem(selectionKey(sessionId)); if (manual && providers.some(provider => provider.id === manual)) return manual; if (defaultProviderId && providers.some(provider => provider.id === defaultProviderId)) return defaultProviderId; return providers[0]?.id || null; };
-    const api = async (path, options) => { const res = await fetch(`/dsh-balance-quota${path}`, { cache: "no-store", ...options, headers: { "content-type": "application/json", ...(options?.headers || {}) } }); const data = await res.json(); if (!data.ok) throw new Error(data.error || "余额查询请求失败"); return data; };
-    const formatMoney = (value, currency) => { try { return new Intl.NumberFormat("zh-CN", { style: "currency", currency: currency || "CNY", currencyDisplay: "narrowSymbol", maximumFractionDigits: 2 }).format(value); } catch { return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value); } };
+
+    const refreshDue = (provider, syncedAt, now = Date.now()) => {
+      if (provider?.status === "disabled" || provider?.balanceEnabled === false) return false;
+      const interval = Number(provider?.queryIntervalMinutes ?? 30);
+      const synced = Date.parse(syncedAt || "");
+      return !Number.isFinite(interval) || interval <= 0 || !Number.isFinite(synced) || now - synced >= interval * 60_000;
+    };
+
+    const resolveSelectedProvider = (providers, sessionId, defaultProviderId) => {
+      const manual = sessionStorage.getItem(selectionKey(sessionId));
+      if (manual && providers.some(provider => provider.id === manual)) return manual;
+      if (defaultProviderId && providers.some(provider => provider.id === defaultProviderId)) return defaultProviderId;
+      return providers[0]?.id || null;
+    };
+
+    const api = async (path, options) => {
+      const res = await fetch(`/dsh-balance-quota${path}`, {
+        cache: "no-store",
+        ...options,
+        headers: { "content-type": "application/json", ...(options?.headers || {}) }
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        const error = new Error(data.error || "余额查询请求失败");
+        error.status = res.status;
+        throw error;
+      }
+      return data;
+    };
+
+    const formatMoney = (value, currency) => {
+      try {
+        return new Intl.NumberFormat("zh-CN", {
+          style: "currency",
+          currency: currency || "CNY",
+          currencyDisplay: "narrowSymbol",
+          maximumFractionDigits: 2
+        }).format(value);
+      } catch {
+        return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value);
+      }
+    };
+
+    const usageLabel = (type) => type === "rolling" ? "滚动用量" : type === "weekly" ? "每周用量" : "每月用量";
+    const compactUsageLabel = (type) => type === "rolling" ? "滚动" : type === "weekly" ? "每周" : "每月";
+
+    function formatResetAt(value) {
+      if (!value) return "暂无重置时间";
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return String(value);
+      const diff = date.getTime() - Date.now();
+      if (diff <= 0) return "即将重置";
+      const totalMinutes = Math.max(1, Math.ceil(diff / 60_000));
+      const days = Math.floor(totalMinutes / 1440);
+      const hours = Math.floor((totalMinutes % 1440) / 60);
+      const minutes = totalMinutes % 60;
+      const parts = [];
+      if (days) parts.push(`${days} 天`);
+      if (hours) parts.push(`${hours} 小时`);
+      if (!days && minutes) parts.push(`${minutes} 分钟`);
+      return `重置于 ${parts.join(" ")}`;
+    }
+
+    function formatSyncedAt(value) {
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return "";
+      const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+      if (seconds < 10) return "刚刚更新";
+      if (seconds < 60) return `${seconds} 秒前更新`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前更新`;
+      return `${Math.floor(seconds / 3600)} 小时前更新`;
+    }
+
+    function formatHistoryAt(value) {
+      if (value === undefined || value === null || value === "") return "";
+      const numeric = typeof value === "number" ? value : typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN;
+      const date = new Date(Number.isFinite(numeric) ? (Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric) : value);
+      if (!Number.isFinite(date.getTime())) return String(value);
+      return new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).format(date);
+    }
+
+    function formatCapacity(value) {
+      if (value === undefined || value === null || value === "") return "";
+      const num = Number(value);
+      if (!Number.isFinite(num)) return String(value);
+      if (num >= 1024 * 1024 && num % (1024 * 1024) === 0) return `${num / (1024 * 1024)}M`;
+      if (num >= 1000 * 1000 && num % (1000 * 1000) === 0) return `${num / 1000000}M`;
+      if (num >= 1024 && num % 1024 === 0) return `${num / 1024}K`;
+      if (num >= 1000 && num % 1000 === 0) return `${num / 1000}K`;
+      return String(num);
+    }
+
+    function parseCapacity(value) {
+      if (!value || typeof value !== "string") return typeof value === "number" ? value : undefined;
+      const trimmed = value.trim();
+      if (!trimmed) return undefined;
+      const match = /^(\d+(?:\.\d+)?)\s*([kmKM])?$/i.exec(trimmed);
+      if (!match) {
+        const num = Number(trimmed);
+        return Number.isFinite(num) ? num : undefined;
+      }
+      const val = parseFloat(match[1]);
+      const unit = (match[2] || "").toUpperCase();
+      if (unit === "K") return Math.round(val * 1024);
+      if (unit === "M") return Math.round(val * 1024 * 1024);
+      return Math.round(val);
+    }
+
     function ensureSettingsStyle() {
-      const id = "dsh-balance-quota-settings-style"; if (document.getElementById(id)) return;
-      const style = document.createElement("style"); style.id = id; style.textContent = `
-.db-plugin-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3);list-style:none;transition:border-color .16s,background .16s}
+      const id = "dsh-balance-quota-settings-style";
+      if (document.getElementById(id)) return;
+      const style = document.createElement("style");
+      style.id = id;
+      style.textContent = `
+        .db-plugin-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3);list-style:none;transition:border-color .16s,background .16s}
         .db-plugin-card:hover{border-color:var(--dsw-alias-label-dimmed)}
         .db-plugin-card.open{border-color:var(--dsw-alias-label-dimmed);background:var(--dsw-alias-bg-layer-2)}
-        .db-plugin-card-head{display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;border:0;border-radius:12px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+        .db-plugin-card-head{appearance:none;display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;border:0;border-radius:12px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+        .db-plugin-card-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
         .db-plugin-card-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:4px}
         .db-plugin-card-title{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}
         .db-plugin-card-desc{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}
-        .db-plugin-card-chevron{flex:none;color:var(--dsw-alias-label-tertiary);font-size:16px;transition:transform .16s}
+        .db-plugin-card-chevron{flex:none;width:14px;height:14px;color:var(--dsw-alias-label-tertiary);transition:transform .16s ease}
         .db-plugin-card.open .db-plugin-card-chevron{transform:rotate(180deg)}
-        .db-plugin-card-body{margin:0 16px;padding:14px 0 16px;border-top:1px solid var(--dsw-alias-border-l2)}
+        .db-plugin-card-body{margin:0 16px;padding:12px 0 16px;border-top:1px solid var(--dsw-alias-border-l2)}
         .db-settings{display:flex;flex-direction:column;gap:12px;max-width:720px;color:var(--dsw-alias-label-primary);font-family:inherit}
-        .db-simple-head{display:flex;flex-direction:column;gap:12px}
-        .db-simple-head h2{margin:0;font-size:16px;line-height:24px;font-weight:500;color:var(--dsw-alias-label-primary)}
-        .db-simple-head p{margin:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary)}
-        .db-provider-list{display:flex;flex-direction:column;gap:8px;margin:12px 0 0;padding:0;list-style:none}
+        .db-import-wrap{position:relative}
+        .db-import-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:1000;min-width:260px;max-width:320px;max-height:380px;overflow-y:auto;padding:6px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-base);box-shadow:0 12px 36px rgba(0,0,0,.2)}
+        .db-import-group-title{padding:6px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:600}
+        .db-import-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:13px/18px inherit;text-align:left;cursor:pointer}
+        .db-import-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
+        .db-import-item-name{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .db-import-item-desc{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:11px}
+        .db-import-divider{height:1px;margin:4px 0;background:var(--dsw-alias-border-l2)}
+        .db-empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:32px 16px;border:1px dashed var(--dsw-alias-border-l2);border-radius:12px;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:13px}
+        .db-provider-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
         .db-provider-row{display:flex;align-items:center;gap:10px;padding:12px 14px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:transparent}
         .db-provider-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary);font-size:14px;font-weight:500;line-height:22px}
         .db-live{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-state-success-primary)}
         .db-live.error{background:var(--dsw-alias-state-error-primary)}
+        .db-live.disabled{background:var(--dsw-alias-label-dimmed)}
         .db-tag{flex:none;border:1px solid var(--dsw-alias-border-l3);border-radius:4px;padding:1px 6px;color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px}
         .db-spacer{flex:1}
         .db-quiet,.db-primary{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border-radius:18px;font:inherit;font-size:14px;line-height:22px;cursor:pointer}
@@ -43,10 +190,8 @@ window.__ModuleLoader__.load({
         .db-provider-row .db-quiet,.db-provider-row .db-delete{height:28px;padding:0 10px;border-radius:14px;font-size:12px;line-height:18px}
         .db-quiet:disabled,.db-primary:disabled,.db-delete:disabled,.db-add:disabled,.db-back:disabled{opacity:.4;cursor:default}
         .db-quiet:focus-visible,.db-primary:focus-visible,.db-delete:focus-visible,.db-add:focus-visible,.db-back:focus-visible,.db-select:focus-visible,.db-toggle:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}
-        .db-add-grid{display:flex;flex-wrap:wrap;gap:10px;margin-top:0}
-        .db-add{flex:1 1 0;min-width:180px;height:44px;box-sizing:border-box;border:1px dashed var(--dsw-alias-border-l3);border-radius:12px;background:transparent;color:var(--dsw-alias-label-primary);font:14px/22px inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
-        .db-add:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2)}
         .db-bottom-settings{display:flex;align-items:center;gap:10px;margin-top:0;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
+        .db-bottom-settings .db-quiet{height:30px;padding:0 12px;border-radius:15px;font-size:12px;line-height:18px}
         .db-select{box-sizing:border-box;height:32px;max-width:240px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:0 32px 0 10px;font:14px/22px inherit;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-position:right 12px center;background-repeat:no-repeat;background-size:12px 12px}
         .db-select:focus{border-color:var(--dsw-alias-brand-primary);outline:none}
         .db-toggle{width:32px;height:18px;border:0;border-radius:9px;background:var(--dsw-alias-bg-overlay);padding:2px;cursor:pointer;flex:none}
@@ -62,7 +207,8 @@ window.__ModuleLoader__.load({
         .db-header-remove:hover{background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}
         .db-header-remove svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
         .db-header-add{align-self:flex-start;height:32px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:12px/18px inherit;cursor:pointer}
-        .db-header-add:hover{background:var(--dsw-alias-interactive-bg-hover)}        .db-editor{display:flex;flex-direction:column;gap:14px;padding:14px 16px;border-radius:12px;background:var(--dsw-alias-bg-module-platform)}
+        .db-header-add:hover{background:var(--dsw-alias-interactive-bg-hover)}
+        .db-editor{display:flex;flex-direction:column;gap:14px;padding:14px 16px;border-radius:12px;background:var(--dsw-alias-bg-module-platform)}
         .db-editor-head{display:flex;align-items:center;gap:8px}
         .db-editor-head h3{margin:0;font-size:14px;line-height:22px;font-weight:500}
         .db-back{box-sizing:border-box;display:inline-flex;align-items:center;height:28px;padding:0 10px;border:0;border-radius:14px;background:transparent;color:var(--dsw-alias-label-tertiary);font:12px/18px inherit;cursor:pointer}
@@ -70,116 +216,263 @@ window.__ModuleLoader__.load({
         .db-form{display:grid;grid-template-columns:1fr;gap:14px}
         .db-field{display:flex;flex-direction:column;gap:6px}
         .db-field.wide{grid-column:1/-1}
+        .db-field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
         .db-field label{font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-secondary);display:inline-flex;align-items:center;gap:10px}
         .db-field input{box-sizing:border-box;height:32px;width:100%;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:0 10px;font:14px/22px inherit;outline:none}
         .db-field input:focus{border-color:var(--dsw-alias-brand-primary)}
         .db-field input::placeholder{color:var(--dsw-alias-label-dimmed)}
         .db-field input:disabled{opacity:.6;cursor:default}
-        .db-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;padding-top:2px}.db-form-actions .db-quiet,.db-form-actions .db-primary{height:36px;min-width:72px;padding:0 16px;border-radius:18px;font-size:14px;line-height:22px}
+        .db-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;padding-top:2px}
+        .db-form-actions .db-quiet,.db-form-actions .db-primary{height:36px;min-width:72px;padding:0 16px;border-radius:18px;font-size:14px;line-height:22px}
         .db-primary{border:0;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}
         .db-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}
         .db-message{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}
+        .db-message.warn{color:var(--dsw-alias-state-warning-primary)}
         .db-message.error{color:var(--dsw-alias-state-error-primary)}
         @media(max-width:640px){.db-provider-row .db-delete{padding:0 6px}.db-bottom-settings{flex-wrap:wrap}}
-        @media (prefers-reduced-motion:reduce){.db-toggle i{transition:none}}
+        @media (prefers-reduced-motion:reduce){.db-toggle i{transition:none}.db-json-preview-loading .db-spinner,.db-endpoint-loading::before{animation:none}}
         .db-provider-card{flex-direction:column;align-items:stretch;gap:0;padding:12px 14px}
         .db-row-line{display:flex;align-items:center;gap:10px;min-width:0}
         .db-row-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0;padding-top:8px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
         .db-row-meta .db-meta-note{color:var(--dsw-alias-label-caption)}
         .db-inline-editor{margin-top:12px;padding:16px;border-radius:10px;background:var(--dsw-alias-bg-module-platform)}
         .db-meta-error{color:var(--dsw-alias-state-error-primary)}
-        .db-bind{box-sizing:border-box;height:28px;max-width:160px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:transparent;color:var(--dsw-alias-label-secondary);padding:0 24px 0 10px;font:12px/18px inherit;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-position:right 8px center;background-repeat:no-repeat;background-size:12px 12px}
-        .db-bind:hover{border-color:var(--dsw-alias-border-l3)}
-         .db-external{margin-top:18px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l2)}
-         .db-external-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}.db-external-head h3{margin:0;font-size:15px;font-weight:600}.db-external-note{margin:4px 0 12px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
-         .db-external-source{padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}.db-external-source+.db-external-source{margin-top:8px}.db-external-source-top{display:flex;align-items:center;gap:8px}.db-external-source-name{font-size:14px;font-weight:600}.db-external-endpoint{margin-top:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.db-external-overall{margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;color:var(--dsw-alias-label-secondary);font-size:12px}.db-external-models{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-top:10px}.db-external-model{padding:9px;border-radius:8px;background:var(--dsw-alias-bg-module-platform);font-size:12px}.db-external-model-top{display:flex;align-items:center;gap:6px}.db-external-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.db-external-metrics{margin-top:5px;color:var(--dsw-alias-label-tertiary);line-height:18px}.db-external-error{color:var(--dsw-alias-state-error-primary)}.db-preview-status{margin:12px 0 14px}.db-preview-status-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:var(--dsw-alias-label-secondary);font-size:12px}.db-preview-status-head strong{color:var(--dsw-alias-label-primary);font-size:14px}.db-preview-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}.db-preview-card{min-width:0;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}.db-preview-card.ok{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 32%,var(--dsw-alias-border-l2))}.db-preview-card.error{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 32%,var(--dsw-alias-border-l2))}.db-preview-card-head{display:flex;align-items:center;gap:7px;min-width:0}.db-preview-card-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:13px}.db-preview-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--dsw-alias-state-warning-primary)}.db-preview-card.ok .db-preview-dot{background:var(--dsw-alias-state-success-primary)}.db-preview-card.error .db-preview-dot{background:var(--dsw-alias-state-error-primary)}.db-preview-state{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary)}.db-preview-metrics{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;color:var(--dsw-alias-label-tertiary);font-size:11px}.db-preview-metrics b{color:var(--dsw-alias-label-primary);font-weight:600}.db-preview-history{display:flex;gap:2px;height:18px;align-items:end;margin-top:10px}.db-preview-history i{display:block;width:3px;height:12px;border-radius:2px;background:var(--dsw-alias-state-warning-primary)}.db-preview-history i.ok{background:var(--dsw-alias-state-success-primary)}.db-preview-history i.error{background:var(--dsw-alias-state-error-primary)}.db-preview-card-error{margin-top:8px;color:var(--dsw-alias-state-error-primary);font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.db-external-form{margin-top:10px;padding:12px;border-radius:9px;background:var(--dsw-alias-bg-module-platform)}
-         .db-modal-backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.38)}.db-modal{display:flex;flex-direction:column;width:min(760px,calc(100vw - 32px));height:min(620px,calc(100vh - 48px));overflow:hidden;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);box-shadow:0 18px 60px rgba(0,0,0,.28)}.db-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}.db-modal-tabs{display:flex;gap:18px;padding:0 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}.db-modal-tabs button{padding:11px 2px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer}.db-modal-tabs button.active{border-color:var(--dsw-alias-label-primary);color:var(--dsw-alias-label-primary);font-weight:600}.db-modal-content{flex:1;min-height:0;overflow:auto;padding:16px 18px}.db-external-source-switch{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l2)}.db-endpoint-row{display:flex;gap:8px}.db-endpoint-row input{flex:1;min-width:0}.db-map-header,.db-map-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,1.4fr) minmax(110px,.8fr) 56px;gap:8px;align-items:center}.db-map-header{padding:0 8px 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}.db-map-row{margin-bottom:8px;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}.db-map-row.disabled{opacity:.58}.db-map-row.disabled .db-select{pointer-events:none}.db-icon-button{display:grid;place-items:center;width:30px;height:30px;padding:0}.db-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.db-map-label{padding:0 8px;font-size:13px}.db-map-label-input{box-sizing:border-box;width:100%;height:32px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:14px/22px inherit;outline:none}.db-map-label-input:focus{border-color:var(--dsw-alias-border-l3);box-shadow:0 0 0 2px rgba(0,0,0,.04)}.db-map-transform{min-width:0;width:100%}.db-test-message{min-height:0;margin:-8px 0 0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}.db-endpoint-field+.db-test-message{margin-top:-8px}.db-test-message.error{color:var(--dsw-alias-state-error-primary)}.db-test-message.success{color:var(--dsw-alias-state-success-primary)}.db-json-result{margin:12px 0}.db-json-label{margin-bottom:6px;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600}.db-json-placeholder{height:72px;display:grid;place-items:center;border:1px dashed var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-tertiary);font-size:12px}.db-json-tree{height:160px;min-height:80px;max-height:520px;resize:vertical;overflow:auto;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-module-platform);font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace}.db-json-node{margin-left:10px}.db-json-node summary{display:flex;gap:8px;align-items:center;cursor:pointer;list-style:none}.db-json-node summary::-webkit-details-marker{display:none}.db-json-node summary:before{content:"▸";color:var(--dsw-alias-label-tertiary)}.db-json-node[open]>summary:before{content:"▾"}.db-json-key{color:#8b5cf6}.db-json-type{color:var(--dsw-alias-label-tertiary)}.db-json-string{color:#198754}.db-json-number{color:#2563eb}.db-json-boolean{color:#d97706}.db-json-null{color:var(--dsw-alias-label-tertiary)}.db-json-children{margin-left:14px;border-left:1px solid var(--dsw-alias-border-l2);padding-left:8px}.db-json-leaf{display:block;margin-left:22px;color:var(--dsw-alias-label-secondary)}.db-modal-close{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}.db-modal-close:hover{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary)}.db-modal-close svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
-         `;
+        .db-external{margin-top:18px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l2)}
+        .db-external-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+        .db-external-head h3{margin:0;font-size:15px;font-weight:600}
+        .db-external-note{margin:4px 0 12px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
+        .db-external-source{padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px}
+        .db-external-source+.db-external-source{margin-top:8px}
+        .db-external-source-top{display:flex;align-items:center;gap:8px}
+        .db-external-source-name{font-size:14px;font-weight:600}
+        .db-external-endpoint{margin-top:4px;color:var(--dsw-alias-label-tertiary);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .db-external-overall{margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;color:var(--dsw-alias-label-secondary);font-size:12px}
+        .db-external-models{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-top:10px}
+        .db-external-model{padding:9px;border-radius:8px;background:var(--dsw-alias-bg-module-platform);font-size:12px}
+        .db-external-model-top{display:flex;align-items:center;gap:6px}
+        .db-external-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+        .db-external-metrics{margin-top:5px;color:var(--dsw-alias-label-tertiary);line-height:18px}
+        .db-external-error{color:var(--dsw-alias-state-error-primary)}
+        .db-preview-status{margin:12px 0 14px}
+        .db-preview-status-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:var(--dsw-alias-label-secondary);font-size:12px}
+        .db-preview-status-head strong{color:var(--dsw-alias-label-primary);font-size:14px}
+        .db-preview-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+        @media(max-width:680px){.db-preview-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+        @media(max-width:460px){.db-preview-cards{grid-template-columns:minmax(0,1fr)}}
+        .db-preview-card{min-width:0;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+        .db-preview-card.ok{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 32%,var(--dsw-alias-border-l2))}
+        .db-preview-card.error{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 32%,var(--dsw-alias-border-l2))}
+        .db-preview-card-head{display:flex;align-items:center;gap:7px;min-width:0}
+        .db-preview-card-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+        .db-preview-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-label-dimmed)}
+        .db-preview-card.ok .db-preview-dot{background:var(--dsw-alias-state-success-primary)}
+        .db-preview-card.error .db-preview-dot{background:var(--dsw-alias-state-error-primary)}
+        .db-preview-card.warn .db-preview-dot{background:var(--dsw-alias-state-warning-primary)}
+        .db-preview-state{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+        .db-preview-metrics{display:flex;flex-wrap:wrap;gap:8px 12px;margin:8px 0;font-size:11px;color:var(--dsw-alias-label-secondary)}
+        .db-preview-metrics b{color:var(--dsw-alias-label-primary);font-weight:600}
+        .db-preview-history{display:flex;width:100%;min-width:0;gap:clamp(1px,.3vw,2px);align-items:center;height:8px;margin-top:6px;overflow:hidden}
+        .db-preview-history i{flex:1 1 0;min-width:0;height:100%;border-radius:1px;background:var(--dsw-alias-border-l2)}
+        .db-preview-history i.ok{background:var(--dsw-alias-state-success-primary)}
+        .db-preview-history i.error{background:var(--dsw-alias-state-error-primary)}
+        .db-preview-history i.warn{background:var(--dsw-alias-state-warning-primary)}
+        .db-json-preview-box{min-height:120px;max-height:300px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+        .db-json-preview-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:120px;color:var(--dsw-alias-label-dimmed);font-size:13px}
+        .db-json-preview-empty svg{width:28px;height:28px;opacity:.4}
+        .db-json-preview-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:120px}
+        .db-json-preview-loading .db-spinner{width:26px;height:26px;border:2px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-brand-primary);border-radius:50%;animation:db-spin 0.7s linear infinite}
+        .db-json-preview-error{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:120px;color:var(--dsw-alias-state-error-primary);font-size:13px;padding:12px;text-align:center}
+        .db-json-preview-error svg{width:24px;height:24px;opacity:.6}
+        @keyframes db-spin{to{transform:rotate(360deg)}}
+        .db-modal-backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;overscroll-behavior:none;background:rgba(0,0,0,.38)}
+        .db-modal{display:flex;flex-direction:column;width:min(760px,calc(100vw - 32px));height:min(620px,calc(100vh - 48px));overflow:hidden;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);box-shadow:0 18px 60px rgba(0,0,0,.28)}
+        .db-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+        .db-modal-close{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer;transition:background .15s,color .15s}
+        .db-modal-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+        .db-modal-close:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+        .db-modal-tabs{display:flex;gap:18px;padding:0 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+        .db-modal-tabs button{padding:11px 2px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer}
+        .db-modal-tabs button.active{border-color:var(--dsw-alias-label-primary);color:var(--dsw-alias-label-primary);font-weight:600}
+        .db-modal-content{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:16px 18px}
+        .db-models-tab{display:flex;flex-direction:column;gap:12px}
+        .db-models-head{display:flex;align-items:center;justify-content:space-between;color:var(--dsw-alias-label-secondary);font-size:13px}
+        .db-model-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+        .db-model-card{display:flex;flex-direction:column;gap:0;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1);transition:border-color .16s}
+        .db-model-card:hover{border-color:var(--dsw-alias-label-dimmed)}
+        .db-model-id{font-weight:600;color:var(--dsw-alias-label-primary);font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .db-model-name{color:var(--dsw-alias-label-secondary);font-size:13px}
+        .db-model-tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-left:4px}
+        .db-model-tag{border:1px solid var(--dsw-alias-border-l3);border-radius:4px;padding:1px 6px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}
+        .db-checkbox-group{display:flex;align-items:center;gap:16px;margin-top:2px}
+        .db-checkbox-label{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--dsw-alias-label-primary);cursor:pointer;user-select:none}
+        .db-checkbox-label input[type="checkbox"]{width:15px;height:15px;cursor:pointer;accent-color:var(--dsw-alias-brand-primary)}
+        .db-monitor-toggle{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
+        .db-monitor-toggle-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
+        .db-monitor-toggle-copy strong{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}
+        .db-monitor-toggle-copy span{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+        .db-monitor-toggle input{width:17px;height:17px;flex:none;cursor:pointer;accent-color:var(--dsw-alias-brand-primary)}
+        .db-model-editor{margin-top:12px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+        .db-models-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px}
+        .db-external-source-switch{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+        .db-endpoint-row{display:flex;gap:8px;position:relative}
+        .db-endpoint-loading{position:absolute;left:0;right:0;bottom:-8px;height:2px;overflow:hidden;border-radius:1px;pointer-events:none}
+        .db-endpoint-loading::before{content:"";position:absolute;top:0;bottom:0;width:36%;border-radius:1px;background:var(--dsw-alias-brand-primary);animation:db-loading-slide 1.1s ease-in-out infinite}
+        @keyframes db-loading-slide{from{transform:translateX(-110%)}to{transform:translateX(320%)}}
+        .db-endpoint-row input{flex:1;min-width:0}
+        .db-map-header,.db-map-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,1.4fr) minmax(110px,.8fr) 56px;gap:8px;align-items:center}
+        .db-map-header{padding:0 8px 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+        .db-map-row{margin-bottom:8px;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
+        .db-map-row.disabled{opacity:.58}
+        .db-map-row.disabled .db-select{pointer-events:none}
+        .db-icon-button{display:grid;place-items:center;width:30px;height:30px;padding:0}
+        .db-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+        .db-map-label{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .db-map-label-input{box-sizing:border-box;height:32px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:0 10px;font:13px inherit}
+        .db-map-transform{max-width:110px}
+        .db-test-message{margin:8px 0 12px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+        .db-test-message.error{color:var(--dsw-alias-state-error-primary)}
+        .db-test-message.success{color:var(--dsw-alias-state-success-primary)}
+        .db-json-node{margin:2px 0;padding-left:14px;border-left:1px solid var(--dsw-alias-border-l3)}
+        .db-json-preview-box>.db-json-node{border-left:0;padding-left:2px}
+        .db-json-node>summary{display:flex;align-items:center;gap:6px;padding:2px 6px;border-radius:6px;list-style:none;cursor:pointer;font-family:inherit;font-size:11px;transition:background .15s,color .15s}
+        .db-json-node>summary::-webkit-details-marker{display:none}
+        .db-json-node>summary::before{content:"";flex:none;width:0;height:0;border-style:solid;border-width:4px 0 4px 5px;border-color:transparent transparent transparent currentColor;opacity:.5;transition:transform .16s}
+        .db-json-node[open]>summary::before{transform:rotate(90deg)}
+        .db-json-node>summary:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+        .db-json-leaf{display:flex;gap:6px;align-items:center;padding:2px 6px;border-radius:6px;font-family:inherit;font-size:11px;transition:background .15s}
+        .db-json-leaf:hover{background:var(--dsw-alias-interactive-bg-hover)}
+        .db-json-key{color:var(--dsw-alias-label-secondary);font-weight:600}
+        .db-json-string{color:var(--dsw-alias-state-success-primary)}
+        .db-json-number{color:var(--dsw-alias-brand-primary)}
+        .db-json-boolean{color:var(--dsw-alias-state-warning-primary)}
+        .db-json-null{color:var(--dsw-alias-label-dimmed)}
+        .db-json-type{flex:none;margin-left:2px;padding:0 5px;border:1px solid var(--dsw-alias-border-l3);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px}
+        .db-json-type.binding{cursor:pointer;border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
+        .db-json-leaf.binding{cursor:crosshair}
+        .db-json-preview-box.binding{cursor:crosshair}
+        .db-json-preview-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:center}
+        .db-json-preview-title{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+        .db-preview-all-toggle{height:26px;padding:0 10px;border-radius:13px;font-size:12px;line-height:18px;cursor:pointer}
+        .db-preview-all-toggle:hover{background:var(--dsw-alias-interactive-bg-hover)}
+        .db-json-preview-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr);height:560px;gap:16px;align-items:stretch}
+        .db-json-preview-split>.db-json-preview-box,.db-json-preview-split>.db-bind-card{width:100%;height:100%;min-height:0;max-height:100%;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+        @media(max-width:760px){.db-json-preview-head,.db-json-preview-split{grid-template-columns:1fr}.db-json-preview-split{grid-template-rows:repeat(2,minmax(0,420px));height:auto}.db-json-preview-split>.db-json-preview-box,.db-json-preview-split>.db-bind-card{height:420px;max-height:420px}}
+        .db-bind-card{display:flex;flex-direction:column;gap:14px;min-width:0;padding:18px;border-radius:16px;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 4%,var(--dsw-alias-bg-layer-1));box-shadow:0 8px 24px color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
+        .db-bind-list-row{display:flex;align-items:center;gap:8px;padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l3);font-size:11px;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-list-row>span:first-child{flex:none}
+        .db-bind-list-target{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+        .db-bind-target{cursor:pointer;border-radius:8px;outline:1px solid transparent;outline-offset:2px;transition:color .15s,outline-color .15s,background .15s}
+        .db-bind-target:hover{outline-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-interactive-bg-hover)}
+        .db-bind-target.active{outline-color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent)}
+        .db-bind-target.empty{color:var(--dsw-alias-label-secondary)}
+        .db-bind-target.empty b{color:var(--dsw-alias-label-secondary);font-weight:500}
+        .db-bind-target.ok{color:var(--dsw-alias-state-success-primary)}
+        .db-bind-target.error{color:var(--dsw-alias-state-error-primary)}
+        .db-bind-target.warn{color:var(--dsw-alias-state-warning-primary)}
+        .db-bind-dashboard-head{display:flex;align-items:center;gap:12px;min-width:0}
+        .db-bind-model-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+        .db-bind-model{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;line-height:22px;font-weight:600}
+        .db-bind-model-meta{font-size:11px;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-state{display:flex;flex:none;min-width:54px;flex-direction:column;align-items:center;gap:1px;padding:5px 10px;border-radius:14px;background:var(--dsw-alias-bg-module-platform);font-size:12px;font-weight:600}
+        .db-bind-status-path{max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:9px;font-weight:500;opacity:.72}
+        .db-bind-state.ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);color:var(--dsw-alias-state-success-primary)}
+        .db-bind-state.error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}
+        .db-bind-state.warn{background:color-mix(in srgb,var(--dsw-alias-state-warning-primary) 12%,transparent);color:var(--dsw-alias-state-warning-primary)}
+        .db-bind-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .db-bind-metric-grid>.db-bind-target,.db-bind-card>.db-bind-target{display:block;min-width:0}
+        .db-bind-metric-card{display:flex;min-width:0;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--dsw-alias-border-l3);border-radius:12px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 82%,transparent)}
+        .db-bind-target.empty .db-bind-metric-value,.db-bind-target.empty .db-bind-availability-value{color:var(--dsw-alias-label-secondary)}
+        .db-bind-metric-label{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-metric-label svg{width:14px;height:14px;flex:none}
+        .db-bind-field-path{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-metric-value{font-size:22px;line-height:28px;font-weight:600;color:var(--dsw-alias-label-primary)}
+        .db-bind-metric-value small{margin-left:3px;font-size:11px;font-weight:500;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-availability{display:flex;align-items:end;justify-content:space-between;gap:12px;padding:14px 0;border-top:1px solid var(--dsw-alias-border-l3);border-bottom:1px solid var(--dsw-alias-border-l3)}
+        .db-bind-availability-copy{display:flex;min-width:0;flex-direction:column;gap:5px}
+        .db-bind-availability-label{font-size:12px;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-availability-value{font-size:30px;line-height:34px;font-weight:700;color:var(--dsw-alias-state-success-primary)}
+        .db-bind-history-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-history-field-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+        .db-bind-history-field-row>.db-bind-target{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--dsw-alias-label-secondary)}
+        .db-bind-history-field-row>.db-bind-target.invalid,.db-bind-history-invalid{color:var(--dsw-alias-state-error-primary)}
+        .db-bind-history-invalid{margin-left:auto}
+        .db-bind-history-target{display:block;padding:3px 0}
+        .db-bind-history-bars{display:flex;align-items:stretch;gap:3px;height:26px}
+        .db-bind-history-bars i{flex:1;min-width:2px;border-radius:2px;background:var(--dsw-alias-border-l2)}
+        .db-bind-history-bars i.ok{background:var(--dsw-alias-state-success-primary)}
+        .db-bind-history-bars i.error{background:var(--dsw-alias-state-error-primary)}
+        .db-bind-history-bars i.warn{background:var(--dsw-alias-state-warning-primary)}
+        .db-bind-history-axis{display:flex;justify-content:space-between;font-size:9px;letter-spacing:.12em;color:var(--dsw-alias-label-dimmed)}
+        .db-bind-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+        .db-bind-action-btn{height:24px;padding:0 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:22px;cursor:pointer}
+        .db-bind-action-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+        .db-bind-action-btn.on{border-color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent);color:var(--dsw-alias-brand-primary)}
+        .db-bind-card-foot{display:flex;flex-direction:column;gap:8px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l3);font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+      `;
       document.head.append(style);
     }
-    const usageLabel = (type) => type === "rolling" ? "滚动用量" : type === "weekly" ? "每周用量" : "每月用量";
-    const compactUsageLabel = (type) => type === "rolling" ? "滚动" : type === "weekly" ? "每周" : "每月";
-    function formatResetAt(value) {
-      if (!value) return "暂无重置时间";
-      const date = new Date(value);
-      if (!Number.isFinite(date.getTime())) return String(value);
-      const diff = date.getTime() - Date.now();
-      if (diff <= 0) return "即将重置";
-      const totalMinutes = Math.max(1, Math.ceil(diff / 60_000));
-      const days = Math.floor(totalMinutes / 1440);
-      const hours = Math.floor(totalMinutes % 1440 / 60);
-      const minutes = totalMinutes % 60;
-      const parts = [];
-      if (days) parts.push(`${days} 天`);
-      if (hours) parts.push(`${hours} 小时`);
-      if (!days && minutes) parts.push(`${minutes} 分钟`);
-      return `重置于 ${parts.join(" ")}`;
-    }
-    function formatSyncedAt(value) {
-      const date = new Date(value);
-      if (!Number.isFinite(date.getTime())) return "";
-      const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-      if (seconds < 10) return "刚刚更新";
-      if (seconds < 60) return `${seconds} 秒前更新`;
-      if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前更新`;
-      return `${Math.floor(seconds / 3600)} 小时前更新`;
-    }
+
     function notifyDock() {
       for (const listener of state.dockListeners) listener();
     }
+
     function syncSession() {
       const nextId = state.sessions?.list?.getSnapshot?.().current || null;
       if (nextId === state.sessionId) return;
       state.sessionId = nextId;
       state.requestGeneration += 1;
       state.refreshingProviderId = null;
-      // 会话手动选择优先，其次使用设置页默认供应商，最后回退到第一个供应商。
       state.selectedProviderId = resolveSelectedProvider(state.providers, nextId, state.config?.defaultProviderId);
       refreshBar();
     }
+
     function subscribeDock(listener) {
       state.dockListeners.add(listener);
       return () => state.dockListeners.delete(listener);
     }
+
     function observeMenuDismissal() {
       const onDocumentPointerDown = (event) => {
         const menu = document.querySelector(".dsh-balance-provider-menu");
-        if (menu && !menu.hidden && !menu.contains(event.target) && !event.target.closest?.(".dsh-balance-provider")) menu.hidden = true;
+        if (menu && !menu.hidden && !menu.contains(event.target) && !event.target.closest?.(".dsh-balance-provider")) {
+          menu.hidden = true;
+        }
       };
       const closeOverlays = () => {
         const menu = document.querySelector(".dsh-balance-provider-menu");
         if (menu && !menu.hidden) menu.hidden = true;
       };
       window.addEventListener("resize", closeOverlays);
-      window.addEventListener("scroll", closeOverlays, true);
       document.addEventListener("pointerdown", onDocumentPointerDown);
       return () => {
         window.removeEventListener("resize", closeOverlays);
-        window.removeEventListener("scroll", closeOverlays, true);
         document.removeEventListener("pointerdown", onDocumentPointerDown);
       };
     }
+
     function BalanceDock() {
       const [, redraw] = React.useReducer(value => value + 1, 0);
       const hostRef = React.useRef(null);
+      const statusBarEnabled = Boolean(state.config?.statusBar);
       React.useEffect(() => subscribeDock(redraw), []);
-      if (state.config?.statusBar) ensureBar();
+      if (statusBarEnabled) ensureBar();
       React.useLayoutEffect(() => {
         const host = hostRef.current;
         const bar = state.bar;
         if (!host || !bar) return;
         host.replaceChildren(bar);
         return () => {
-          // 插槽卸载时归还状态栏 DOM，宿主会在重新挂载插槽时恢复。
           if (bar.parentElement === host) bar.remove();
         };
-      });
-      if (!state.config?.statusBar) return null;
+      }, [statusBarEnabled]);
+      if (!statusBarEnabled) return null;
       return h("span", { className: "dsh-balance-dock-host", ref: hostRef });
     }
+
     function ensureBar() {
       if (state.bar) return state.bar;
-      state.style = document.createElement("style"); state.style.textContent = `
+      state.style = document.createElement("style");
+      state.style.textContent = `
         .dsh-balance-dock-host{display:flex;align-items:center;justify-content:center;min-width:0;width:100%;margin-top:2px}
         .dsh-balance-status{position:relative;z-index:0;display:flex;align-items:center;justify-content:center;min-width:0;width:100%;max-width:100%;color:var(--dsw-alias-label-tertiary,#8a919b);font:12px/18px ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
         .dsh-balance-status *{box-sizing:border-box}
@@ -191,8 +484,31 @@ window.__ModuleLoader__.load({
         .dsh-balance-value{flex:none;color:var(--dsw-alias-label-primary,#30353c);font-weight:650;font-variant-numeric:tabular-nums}
         .dsh-balance-updated{flex:none;margin-left:8px;color:var(--dsw-alias-label-tertiary,#a0a6ae);font-size:11px}
         .dsh-balance-refresh{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;margin-left:5px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#9299a2);font:14px/1 inherit;cursor:pointer}
-        .dsh-balance-refresh.loading{animation:dsh-balance-spin .7s linear infinite}.dsh-balance-refresh:disabled{cursor:wait;opacity:.65}@keyframes dsh-balance-spin{to{transform:rotate(360deg)}}
+        .dsh-balance-refresh.loading{animation:dsh-balance-spin .7s linear infinite}
+        .dsh-balance-refresh:disabled{cursor:wait;opacity:.65}
+        @keyframes dsh-balance-spin{to{transform:rotate(360deg)}}
         .dsh-balance-refresh:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#f1f3f5);color:var(--dsw-alias-label-primary,#25292f)}
+        .dsh-balance-health{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;margin-left:2px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#9299a2);cursor:pointer}
+        .dsh-balance-health:hover{background:var(--dsw-alias-interactive-bg-hover,#f1f3f5);color:var(--dsw-alias-state-success-primary,#21aa8b)}
+        .dsh-balance-health svg{width:15px;height:15px}
+        .dsh-health-backdrop{position:fixed;inset:0;z-index:1400;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(20,24,30,.46)}
+        .dsh-health-modal{display:flex;width:min(920px,100%);max-height:min(760px,calc(100vh - 48px));flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#e1e4e8);border-radius:12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 24px 70px rgba(18,24,34,.24);color:var(--dsw-alias-label-primary,#25292f)}
+        .dsh-health-head{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid var(--dsw-alias-border-l2,#e1e4e8)}
+        .dsh-health-title{display:flex;min-width:0;flex:1;flex-direction:column;gap:2px}
+        .dsh-health-title strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:17px;line-height:23px}
+        .dsh-health-title span{color:var(--dsw-alias-label-tertiary,#9299a2);font-size:11px}
+        .dsh-health-action{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#9299a2);font:18px/1 inherit;cursor:pointer;transition:background .15s,color .15s}
+        .dsh-health-action:hover{background:var(--dsw-alias-interactive-bg-hover,#f1f3f5);color:var(--dsw-alias-label-primary,#25292f)}
+        .dsh-health-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4d73ff);outline-offset:-2px}
+        .dsh-health-action:disabled{cursor:wait;opacity:.55}
+        .dsh-health-refresh{font-size:14px}
+        .dsh-health-body{min-height:220px;overflow:auto;padding:18px 20px;overscroll-behavior:contain;scrollbar-gutter:stable}
+        .dsh-health-source{display:flex;min-width:0;align-items:center;gap:6px;margin-bottom:14px}
+        .dsh-health-source span{color:var(--dsw-alias-label-secondary,#68707b);font-size:13px;line-height:28px}
+        .dsh-health-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;color:var(--dsw-alias-label-secondary,#68707b);font-size:12px}
+        .dsh-health-empty{display:flex;min-height:190px;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary,#9299a2);font-size:13px;text-align:center}
+        .dsh-health-spinner{width:24px;height:24px;margin-right:10px;border:2px solid var(--dsw-alias-border-l2,#e1e4e8);border-top-color:var(--dsw-alias-brand-primary,#4d73ff);border-radius:50%;animation:dsh-balance-spin .7s linear infinite}
+        @media(max-width:620px){.dsh-health-backdrop{padding:12px}.dsh-health-modal{max-height:calc(100vh - 24px)}.dsh-health-head,.dsh-health-body{padding-left:14px;padding-right:14px}}
         .dsh-balance-summary.error{color:var(--dsw-alias-state-error-primary,#d04d59)}
         .dsh-balance-summary.error .dsh-balance-dot{background:var(--dsw-alias-state-error-primary,#d04d59)}
         .dsh-balance-provider-menu{position:fixed;z-index:1001;width:230px;padding:6px;border:1px solid var(--dsw-alias-border-l2,#e1e4e8);border-radius:12px;background:var(--dsw-alias-bg-base,#fff);box-shadow:0 12px 34px rgba(26,34,46,.14)}
@@ -204,32 +520,292 @@ window.__ModuleLoader__.load({
         .dsh-balance-provider-option-value{margin-left:auto;color:var(--dsw-alias-label-secondary,#68707b);font-size:12px;font-weight:600}
         .dsh-balance-provider-option.active .dsh-balance-provider-option-value{margin-left:8px;margin-right:8px}
         @media (max-width:760px){.dsh-balance-updated{display:none}}
-      `; document.head.append(state.style);
-      const bar = document.createElement("div"); bar.className = "dsh-balance-status"; bar.setAttribute("aria-live", "polite");
-      const menu = document.createElement("div"); menu.className = "dsh-balance-provider-menu"; menu.hidden = true;
-      const summary = document.createElement("div"); summary.className = "dsh-balance-summary";
+      `;
+      document.head.append(state.style);
+
+      const bar = document.createElement("div");
+      bar.className = "dsh-balance-status";
+      bar.setAttribute("aria-live", "polite");
+
+      const menu = document.createElement("div");
+      menu.className = "dsh-balance-provider-menu";
+      menu.hidden = true;
+
+      const summary = document.createElement("div");
+      summary.className = "dsh-balance-summary";
       summary.addEventListener("click", event => {
         const providerName = event.target.closest?.(".dsh-balance-provider");
         if (!providerName) return;
         event.stopPropagation();
-        if (menu.hidden) renderProviderMenu(menu, providerName); else menu.hidden = true;
+        if (menu.hidden) renderProviderMenu(menu, providerName);
+        else menu.hidden = true;
       });
-      bar.append(summary); document.body.append(menu); state.bar = bar; return bar;
+
+      bar.append(summary);
+      document.body.append(menu);
+      state.bar = bar;
+      return bar;
     }
+
+    function closeHealthModal() {
+      state.healthRequestGeneration += 1;
+      state.healthModal?.remove();
+      state.healthModal = null;
+    }
+
+    function renderHealthModal(source, phase) {
+      const backdrop = state.healthModal;
+      if (!backdrop) return;
+      const modal = backdrop.querySelector(".dsh-health-modal");
+      const content = backdrop.querySelector(".dsh-health-content");
+      const updated = backdrop.querySelector(".dsh-health-source span");
+      const refresh = backdrop.querySelector(".dsh-health-refresh");
+      if (!modal || !content || !updated || !refresh) return;
+      content.replaceChildren();
+      refresh.disabled = phase.loading === true;
+      updated.textContent = phase.loading ? "正在获取所有模型状态" : phase.error ? "请求失败" : phase.status?.fetchedAt ? `更新于 ${formatHistoryAt(phase.status.fetchedAt)}` : "";
+
+      if (phase.loading) {
+        const empty = document.createElement("div");
+        empty.className = "dsh-health-empty";
+        const spinner = document.createElement("i");
+        spinner.className = "dsh-health-spinner";
+        empty.append(spinner, document.createTextNode("正在获取健康状态"));
+        content.append(empty);
+        return;
+      }
+      if (phase.error) {
+        const empty = document.createElement("div");
+        empty.className = "dsh-health-empty";
+        empty.textContent = phase.error;
+        content.append(empty);
+        return;
+      }
+
+      const models = Array.isArray(phase.status?.models) ? phase.status.models : [];
+      const failed = models.filter(model => model.status === "error").length;
+      const unknown = models.filter(model => model.status !== "ok" && model.status !== "error").length;
+      const summary = document.createElement("div");
+      summary.className = "dsh-health-summary";
+      const summaryText = document.createElement("strong");
+      summaryText.textContent = `${models.length} 个模型`;
+      const summaryState = document.createElement("span");
+      summaryState.textContent = failed ? `${failed} 个失败${unknown ? ` · ${unknown} 个未知` : ""}` : unknown ? `${unknown} 个状态未知` : "全部正常";
+      summary.append(summaryText, summaryState);
+      content.append(summary);
+
+      if (!models.length) {
+        const empty = document.createElement("div");
+        empty.className = "dsh-health-empty";
+        empty.textContent = "接口未返回模型状态";
+        content.append(empty);
+        return;
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "db-preview-cards";
+      for (const model of models) {
+        const tone = model.status === "ok" ? "ok" : model.status === "error" ? "error" : "warn";
+        const card = document.createElement("article");
+        card.className = `db-preview-card ${tone}`;
+        const head = document.createElement("div");
+        head.className = "db-preview-card-head";
+        const dot = document.createElement("i");
+        dot.className = "db-preview-dot";
+        const name = document.createElement("strong");
+        name.textContent = model.model || "未知模型";
+        name.title = name.textContent;
+        const status = document.createElement("span");
+        status.className = "db-preview-state";
+        status.textContent = tone === "ok" ? "正常" : tone === "error" ? "失败" : "未知";
+        head.append(dot, name, status);
+        card.append(head);
+
+        const metrics = document.createElement("div");
+        metrics.className = "db-preview-metrics";
+        const addMetric = (label, value) => {
+          const item = document.createElement("span");
+          item.append(document.createTextNode(`${label} `));
+          const strong = document.createElement("b");
+          strong.textContent = value;
+          item.append(strong);
+          metrics.append(item);
+        };
+        if (model.availability !== undefined) addMetric("可用率", `${Number(model.availability).toFixed(2)}%`);
+        if (model.ttftMs !== undefined) addMetric("TTFT", `${model.ttftMs}ms`);
+        if (model.responseMs !== undefined) addMetric("响应", `${model.responseMs}ms`);
+        if (model.samples) addMetric("样本", String(model.samples));
+        if (metrics.childNodes.length) card.append(metrics);
+
+        const records = Array.isArray(model.history) && model.history.length ? model.history.slice(-60) : [{ status: model.status }];
+        const history = document.createElement("div");
+        history.className = "db-preview-history";
+        history.title = "最近健康记录";
+        for (const record of records) {
+          const bar = document.createElement("i");
+          bar.className = record.status === "ok" ? "ok" : record.status === "error" ? "error" : "warn";
+          bar.title = [formatHistoryAt(record.at), record.error].filter(Boolean).join(" · ") || "健康状态记录";
+          history.append(bar);
+        }
+        card.append(history);
+        grid.append(card);
+      }
+      content.append(grid);
+    }
+
+    function openHealthModal(source) {
+      closeHealthModal();
+      const backdrop = document.createElement("div");
+      backdrop.className = "dsh-health-backdrop";
+      backdrop.setAttribute("role", "presentation");
+      const modal = document.createElement("section");
+      modal.className = "dsh-health-modal";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.setAttribute("aria-label", `${source.name} 健康监测`);
+      const head = document.createElement("header");
+      head.className = "dsh-health-head";
+      const title = document.createElement("div");
+      title.className = "dsh-health-title";
+      const strong = document.createElement("strong");
+      strong.textContent = "健康监测";
+      title.append(strong);
+      const refresh = document.createElement("button");
+      refresh.type = "button";
+      refresh.className = "dsh-health-action dsh-health-refresh";
+      refresh.textContent = "↻";
+      refresh.title = "刷新健康状态";
+      refresh.setAttribute("aria-label", "刷新健康状态");
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "dsh-health-action";
+      close.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      close.title = "关闭健康监测";
+      close.setAttribute("aria-label", "关闭健康监测");
+      const body = document.createElement("div");
+      body.className = "dsh-health-body";
+      const sourceMeta = document.createElement("div");
+      sourceMeta.className = "dsh-health-source";
+      const updated = document.createElement("span");
+      sourceMeta.append(updated, refresh);
+      const content = document.createElement("div");
+      content.className = "dsh-health-content";
+      body.append(sourceMeta, content);
+      head.append(title, close);
+      modal.append(head, body);
+      backdrop.append(modal);
+      document.body.append(backdrop);
+      state.healthModal = backdrop;
+
+      const onKeyDown = event => {
+        if (event.key === "Escape") closeHealthModal();
+      };
+      backdrop.addEventListener("keydown", onKeyDown);
+      backdrop.addEventListener("click", event => {
+        if (event.target === backdrop) closeHealthModal();
+      });
+      close.addEventListener("click", closeHealthModal);
+
+      const load = async () => {
+        const generation = ++state.healthRequestGeneration;
+        renderHealthModal(source, { loading: true });
+        try {
+          const result = await api(`/external-status?force=1&source=${encodeURIComponent(source.id)}`);
+          if (generation !== state.healthRequestGeneration || state.healthModal !== backdrop) return;
+          const status = (result.sources || []).find(item => item.id === source.id);
+          if (!status) throw new Error("未找到当前供应商的健康状态");
+          if (status.error) throw new Error(status.error);
+          renderHealthModal(source, { status });
+        } catch (error) {
+          if (generation !== state.healthRequestGeneration || state.healthModal !== backdrop) return;
+          renderHealthModal(source, { error: error.message || "健康状态请求失败" });
+        }
+      };
+      refresh.addEventListener("click", load);
+      close.focus();
+      load();
+    }
+
     function renderProviderMenu(menu, anchor) {
       menu.replaceChildren();
-      for (const item of state.providers) { const option = document.createElement("button"); option.type = "button"; option.className = `dsh-balance-provider-option${item.id === state.provider?.id ? " active" : ""}`; const dot = document.createElement("i"); dot.className = "dsh-balance-dot"; const label = document.createElement("span"); label.textContent = item.name; const value = document.createElement("span"); value.className = "dsh-balance-provider-option-value"; value.textContent = (item.usageWindows || []).length ? `${Math.max(...item.usageWindows.map(window => window.percent))}%` : item.status === "ok" ? formatMoney(item.available, item.currency) : "查询失败"; option.append(dot, label, value); option.addEventListener("click", event => { event.stopPropagation(); state.selectedProviderId = item.id; state.requestGeneration += 1; sessionStorage.setItem(selectionKey(state.sessionId), item.id); menu.hidden = true; renderBar(state.config || { statusBar: true }, state.providers); refreshBar(false, false, item.id, state.requestGeneration); }); menu.append(option); }
-      const rect = anchor.getBoundingClientRect(); menu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - 242))}px`; menu.style.bottom = `${Math.max(12, window.innerHeight - rect.top + 8)}px`; menu.hidden = false;
+      for (const item of state.providers) {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = `dsh-balance-provider-option${item.id === state.provider?.id ? " active" : ""}`;
+        const dot = document.createElement("i");
+        dot.className = "dsh-balance-dot";
+        const label = document.createElement("span");
+        label.textContent = item.name;
+        const value = document.createElement("span");
+        value.className = "dsh-balance-provider-option-value";
+        value.textContent = item.status === "disabled"
+          ? "余额监测已关闭"
+          : (item.usageWindows || []).length
+            ? `${Math.max(...item.usageWindows.map(window => window.percent))}%`
+            : item.status === "ok"
+              ? formatMoney(item.available, item.currency)
+              : "查询失败";
+        option.append(dot, label, value);
+        option.addEventListener("click", event => {
+          event.stopPropagation();
+          state.selectedProviderId = item.id;
+          state.requestGeneration += 1;
+          sessionStorage.setItem(selectionKey(state.sessionId), item.id);
+          menu.hidden = true;
+          renderBar(state.config || { statusBar: true }, state.providers);
+          refreshBar(false, false, item.id, state.requestGeneration);
+        });
+        menu.append(option);
+      }
+      const rect = anchor.getBoundingClientRect();
+      menu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - 242))}px`;
+      menu.style.bottom = `${Math.max(12, window.innerHeight - rect.top + 8)}px`;
+      menu.hidden = false;
     }
+
     function renderBar(config, providers) {
-      if (!config.statusBar) { state.bar?.remove(); state.bar = null; state.provider = null; notifyDock(); return; }
-      const bar = ensureBar(); const selected = state.selectedProviderId && providers.some(provider => provider.id === state.selectedProviderId) ? providers.find(provider => provider.id === state.selectedProviderId) : providers[0]; const summary = bar.querySelector(".dsh-balance-summary"); state.provider = selected || null; summary.replaceChildren(); summary.className = "dsh-balance-summary";
-      const put = (text, className) => { const span = document.createElement("span"); if (className) span.className = className; span.textContent = text; summary.append(span); return span; };
-      const dot = document.createElement("i"); dot.className = "dsh-balance-dot"; summary.append(dot);
-      if (!selected) { put("未配置余额供应商", "dsh-balance-provider"); notifyDock(); return; }
+      if (!config.statusBar) {
+        state.bar?.remove();
+        state.bar = null;
+        state.provider = null;
+        notifyDock();
+        return;
+      }
+      const bar = ensureBar();
+      const selected = state.selectedProviderId && providers.some(provider => provider.id === state.selectedProviderId)
+        ? providers.find(provider => provider.id === state.selectedProviderId)
+        : providers[0];
+      const summary = bar.querySelector(".dsh-balance-summary");
+      state.provider = selected || null;
+      summary.replaceChildren();
+      summary.className = "dsh-balance-summary";
+
+      const put = (text, className) => {
+        const span = document.createElement("span");
+        if (className) span.className = className;
+        span.textContent = text;
+        summary.append(span);
+        return span;
+      };
+
+      const dot = document.createElement("i");
+      dot.className = "dsh-balance-dot";
+      summary.append(dot);
+
+      if (!selected) {
+        put("未配置余额供应商", "dsh-balance-provider");
+        notifyDock();
+        return;
+      }
+
       put(selected.name, "dsh-balance-provider");
-      if (selected.status !== "ok") {
-        summary.classList.add("error"); put("查询失败", "dsh-balance-separator"); put(selected.error || "余额查询失败", "dsh-balance-value");
+
+      if (selected.status === "disabled") {
+        // Provider selection and health monitoring remain available without querying balance.
+      } else if (selected.status !== "ok") {
+        summary.classList.add("error");
+        put("查询失败", "dsh-balance-separator");
+        put(selected.error || "余额查询失败", "dsh-balance-value");
       } else {
         const windows = selected.usageWindows || [];
         if (windows.length) {
@@ -240,118 +816,2323 @@ window.__ModuleLoader__.load({
             if (level) value.classList.add(level);
           }
         } else {
-          put("· 可用余额", "dsh-balance-separator"); put(formatMoney(selected.available, selected.currency), "dsh-balance-value");
+          put("· 可用余额", "dsh-balance-separator");
+          put(formatMoney(selected.available, selected.currency), "dsh-balance-value");
         }
       }
-      if (selected.syncedAt) put(formatSyncedAt(selected.syncedAt), "dsh-balance-updated");
-      const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = `dsh-balance-refresh${state.refreshingProviderId === selected.id ? " loading" : ""}`; refresh.textContent = "↻"; refresh.title = "刷新余额"; refresh.setAttribute("aria-label", "刷新余额"); refresh.disabled = state.refreshingProviderId === selected.id;
-      refresh.addEventListener("click", async event => { event.stopPropagation(); if (state.refreshingProviderId) return; const providerId = selected.id; const generation = ++state.requestGeneration; state.refreshingProviderId = providerId; renderBar(state.config || { statusBar: true }, state.providers); try { await refreshBar(false, true, providerId, generation); } finally { if (state.refreshingProviderId === providerId) state.refreshingProviderId = null; if (state.provider?.id === providerId) renderBar(state.config || { statusBar: true }, state.providers); } });
-      summary.append(refresh); notifyDock();
+
+      if (selected.status !== "disabled") {
+        if (selected.syncedAt) put(formatSyncedAt(selected.syncedAt), "dsh-balance-updated");
+
+        const refresh = document.createElement("button");
+        refresh.type = "button";
+        refresh.className = `dsh-balance-refresh${state.refreshingProviderId === selected.id ? " loading" : ""}`;
+        refresh.textContent = "↻";
+        refresh.title = "刷新余额";
+        refresh.setAttribute("aria-label", "刷新余额");
+        refresh.disabled = state.refreshingProviderId === selected.id;
+
+        refresh.addEventListener("click", async event => {
+          event.stopPropagation();
+          if (state.refreshingProviderId) return;
+          const providerId = selected.id;
+          const generation = ++state.requestGeneration;
+          state.refreshingProviderId = providerId;
+          renderBar(state.config || { statusBar: true }, state.providers);
+          try {
+            await refreshBar(false, true, providerId, generation);
+          } finally {
+            if (state.refreshingProviderId === providerId) state.refreshingProviderId = null;
+            if (state.provider?.id === providerId) renderBar(state.config || { statusBar: true }, state.providers);
+          }
+        });
+
+        summary.append(refresh);
+      }
+
+      const healthSource = (config.externalStatusSources || []).find(source => source.providerId === selected.id && source.enabled === true);
+      if (healthSource) {
+        const health = document.createElement("button");
+        health.type = "button";
+        health.className = "dsh-balance-health";
+        health.title = "查看健康监测";
+        health.setAttribute("aria-label", "查看健康监测");
+        health.innerHTML = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        health.addEventListener("click", event => {
+          event.stopPropagation();
+          openHealthModal(healthSource);
+        });
+        summary.append(health);
+      }
+      notifyDock();
     }
-    async function refreshBar(reloadConfig = false, force = false, providerId = null, requestGeneration = state.requestGeneration) { try { if (reloadConfig || !state.config) state.config = (await api("/config")).config; const targetId = providerId || (force ? state.provider?.id : null); const query = new URLSearchParams(); if (force) query.set("force", "1"); if (targetId) query.set("provider", targetId); const result = (await api(`/summary${query.size ? `?${query}` : ""}`)).providers; if (requestGeneration !== state.requestGeneration) return; const providers = targetId ? state.providers.map(provider => result.find(item => item.id === provider.id) || provider) : result; state.providers = providers; const resolvedId = resolveSelectedProvider(providers, state.sessionId, state.config?.defaultProviderId); state.selectedProviderId = resolvedId; if (resolvedId && sessionStorage.getItem(selectionKey(state.sessionId)) !== resolvedId && sessionStorage.getItem(selectionKey(state.sessionId))) sessionStorage.removeItem(selectionKey(state.sessionId)); renderBar(state.config, providers); } catch { if (requestGeneration !== state.requestGeneration) return; if (state.bar) { state.provider = { name: "余额查询", status: "error", error: "网络连接不可用" }; renderBar(state.config || { statusBar: true }, [state.provider]); } } }
+
+    async function refreshBar(reloadConfig = false, force = false, providerId = null, requestGeneration = state.requestGeneration) {
+      try {
+        if (reloadConfig || !state.config) state.config = (await api("/config")).config;
+        const targetId = providerId || (force ? state.provider?.id : null);
+        const query = new URLSearchParams();
+        if (force) query.set("force", "1");
+        if (targetId) query.set("provider", targetId);
+        const result = (await api(`/summary${query.size ? `?${query}` : ""}`)).providers;
+        if (requestGeneration !== state.requestGeneration) return;
+        const providers = targetId ? state.providers.map(provider => result.find(item => item.id === provider.id) || provider) : result;
+        state.providers = providers;
+        const resolvedId = resolveSelectedProvider(providers, state.sessionId, state.config?.defaultProviderId);
+        state.selectedProviderId = resolvedId;
+        if (resolvedId && sessionStorage.getItem(selectionKey(state.sessionId)) !== resolvedId && sessionStorage.getItem(selectionKey(state.sessionId))) {
+          sessionStorage.removeItem(selectionKey(state.sessionId));
+        }
+        renderBar(state.config, providers);
+      } catch {
+        if (requestGeneration !== state.requestGeneration) return;
+        if (state.bar) {
+          state.provider = { name: "余额查询", status: "error", error: "网络连接不可用" };
+          renderBar(state.config || { statusBar: true }, [state.provider]);
+        }
+      }
+    }
+
+    const loadLlmSettingsSnapshot = async (force = false) => {
+      if (!force && state.llmSettingsSnapshot) return state.llmSettingsSnapshot;
+      if (!force && state.llmSettingsPromise) return state.llmSettingsPromise;
+      const connection = state.connection;
+      if (!connection) throw new Error("未连接到 DSH 宿主服务");
+      const pending = Promise.all([
+        connection.api.llm.providers({}),
+        connection.api.settings.describe({})
+      ]).then(([directory, settings]) => {
+        if (!directory.result.ok || !settings.result.ok) throw new Error("无法读取模型供应商");
+        const snapshot = { directory, settings };
+        state.llmSettingsSnapshot = snapshot;
+        return snapshot;
+      }).finally(() => {
+        if (state.llmSettingsPromise === pending) state.llmSettingsPromise = null;
+      });
+      state.llmSettingsPromise = pending;
+      return pending;
+    };
+
+    function JsonTreeNode({ value, path, labelKey, depth, bindingSlot, onNodeClick }) {
+      const [open, setOpen] = React.useState(depth < 2);
+      if (value === null || typeof value !== "object") {
+        const type = value === null ? "null" : typeof value;
+        const className = type === "string" ? "db-json-string" : type === "number" ? "db-json-number" : type === "boolean" ? "db-json-boolean" : "db-json-null";
+        return h(
+          "div",
+          { className: `db-json-leaf${bindingSlot ? " binding" : ""}`, style: { cursor: "pointer" }, onClick: () => { if (bindingSlot) onNodeClick(path, type); } },
+          h("span", { className: "db-json-key" }, labelKey),
+          h("span", null, ":"),
+          h("span", { className }, JSON.stringify(value))
+        );
+      }
+      const entries = Object.entries(value);
+      const isArray = Array.isArray(value);
+      const typeLabel = isArray ? `数组 · ${entries.length} 项` : `对象 · ${entries.length} 个字段`;
+      const bindingArray = bindingSlot === "modelListPath" || bindingSlot === "history";
+      return h(
+        "details",
+        { className: "db-json-node", open, onToggle: event => setOpen(event.currentTarget.open) },
+        h(
+          "summary",
+          { style: { cursor: "pointer" } },
+          h("span", { className: "db-json-key" }, labelKey),
+          h("span", null, ":"),
+          h("span", { className: `db-json-type${bindingArray && isArray ? " binding" : ""}`, onClick: () => { if (bindingArray && isArray) onNodeClick(path, "array"); } }, typeLabel)
+        ),
+        open && h(
+          "div",
+          { className: "db-json-children" },
+          ...entries.map(([childKey, child], index) => {
+            const childPath = isArray ? `${path}[${index}]` : `${path}.${childKey}`;
+            return h(JsonTreeNode, {
+              key: childPath,
+              value: child,
+              path: childPath,
+              labelKey: isArray ? `[${index}]` : childKey,
+              depth: depth + 1,
+              bindingSlot,
+              onNodeClick
+            });
+          })
+        )
+      );
+    }
+
+    // Custom Hook for fetching connected LLM model providers from DSH settings
+    function useModelProviders() {
+      const [modelProviders, setModelProviders] = React.useState([]);
+
+      React.useEffect(() => {
+        if (!state.connection) return;
+        loadLlmSettingsSnapshot().then(({ directory, settings }) => {
+          const namespaces = new Map(settings.result.value.namespaces.map(item => [item.ns, item]));
+          const atPath = (value, path) => path.reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), value);
+          setModelProviders(
+            directory.result.value.providers
+              .filter(entry => {
+                const namespace = namespaces.get(entry.settingsNs);
+                return entry.active && namespace && (entry.settingsPath.length === 0 || atPath(namespace.value, entry.settingsPath) !== undefined);
+              })
+              .map(entry => {
+                const namespace = namespaces.get(entry.settingsNs);
+                const profile = atPath(namespace.value, entry.settingsPath) || namespace.value;
+                return {
+                  id: entry.provider,
+                  name: entry.displayName || entry.provider,
+                  credentialRef: typeof profile?.apiKeyEnv === "string" ? profile.apiKeyEnv : "",
+                  baseURL: typeof profile?.baseURL === "string" ? profile.baseURL : ""
+                };
+              })
+          );
+        }).catch(() => setModelProviders([]));
+      }, []);
+
+      return modelProviders;
+    }
+
+    const ALL_REASONING_EFFORTS = [
+      { id: "minimal", label: "极低 (minimal)" },
+      { id: "low", label: "低 (low)" },
+      { id: "medium", label: "中等 (medium)" },
+      { id: "high", label: "高 (high)" },
+      { id: "xhigh", label: "极高 (xhigh)" },
+      { id: "max", label: "最大 (max)" }
+    ];
+
+    function ModelSettingsTab({ provider, boundRoute }) {
+      const [llmMeta, setLlmMeta] = React.useState(null);
+      const [loading, setLoading] = React.useState(true);
+      const [error, setError] = React.useState("");
+      const [successMsg, setSuccessMsg] = React.useState("");
+      const [editingModelId, setEditingModelId] = React.useState(null);
+      const [modelDraft, setModelDraft] = React.useState(null);
+      const [saving, setSaving] = React.useState(false);
+
+      const loadProviderModels = React.useCallback(async (force = false) => {
+        setLoading(true);
+        setError("");
+        try {
+          const { directory: directoryRes, settings: settingsRes } = await loadLlmSettingsSnapshot(force);
+          if (!directoryRes.result.ok || !settingsRes.result.ok) {
+            throw new Error("读取 DSH 模型设置失败");
+          }
+          const route = boundRoute(provider?.id) || provider?.id;
+          const dirProvider = directoryRes.result.value.providers.find(p => p.provider === route || p.provider === provider?.id);
+          const ns = dirProvider?.settingsNs || (provider?.preset === "deepseek" || provider?.id === "deepseek" ? "llm-deepseek" : "llm-pi-ai");
+          const namespace = settingsRes.result.value.namespaces.find(n => n.ns === ns);
+          const settingsPath = dirProvider?.settingsPath || (ns === "llm-pi-ai" ? ["providers", route] : []);
+
+          let current = namespace?.value;
+          for (const key of settingsPath) {
+            current = current?.[key];
+          }
+          const storedModels = current?.models || [];
+          const catalogModels = dirProvider?.models || [];
+          const models = storedModels.length > 0
+            ? storedModels
+            : catalogModels.length > 0
+              ? catalogModels
+              : (ns === "llm-deepseek" ? [{ id: "deepseek-chat", name: "DeepSeek-V3" }, { id: "deepseek-reasoner", name: "DeepSeek-R1" }] : []);
+
+          const providerDefaultReasoning = current?.reasoning || dirProvider?.reasoning || "";
+
+          setLlmMeta({
+            ns,
+            settingsPath,
+            revision: namespace?.revision,
+            providerReasoning: providerDefaultReasoning,
+            models: models.map(m => typeof m === "string" ? { id: m, name: m } : { ...m }),
+            hasCustomOverride: storedModels.length > 0
+          });
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [provider, boundRoute]);
+
+      React.useEffect(() => {
+        loadProviderModels();
+      }, [loadProviderModels]);
+
+      const startEdit = (model) => {
+        setEditingModelId(model.id);
+        const inputList = Array.isArray(model.input) ? model.input : Array.isArray(model.modalities) ? model.modalities : ["text"];
+        const isImageSupported = inputList.includes("image") || Boolean(model.supportsImages);
+
+        let initialEfforts = [];
+        if (model.reasoningEfforts === false) {
+          initialEfforts = [];
+        } else if (typeof model.reasoningEfforts === "object" && model.reasoningEfforts !== null) {
+          if (Array.isArray(model.reasoningEfforts)) {
+            initialEfforts = model.reasoningEfforts;
+          } else {
+            initialEfforts = Object.keys(model.reasoningEfforts);
+          }
+        } else if (model.reasoning || model.reasoningEffort) {
+          initialEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"];
+        }
+
+        const defaultReasoning = (typeof model.reasoning === "string" ? model.reasoning : model.reasoningEffort) || llmMeta?.providerReasoning || "";
+
+        setModelDraft({
+          id: model.id || "",
+          name: model.name || "",
+          contextWindow: formatCapacity(model.contextWindow),
+          maxTokens: formatCapacity(model.maxTokens),
+          supportText: inputList.includes("text") || inputList.length === 0,
+          supportImage: isImageSupported,
+          reasoningDefault: defaultReasoning,
+          reasoningEfforts: initialEfforts
+        });
+        setSuccessMsg("");
+        setError("");
+      };
+
+      const cancelEdit = () => {
+        setEditingModelId(null);
+        setModelDraft(null);
+      };
+
+      const saveModel = async (event) => {
+        event?.preventDefault?.();
+        if (!modelDraft || !modelDraft.id.trim()) {
+          setError("模型 ID 不能为空");
+          return;
+        }
+        setSaving(true);
+        setError("");
+        setSuccessMsg("");
+        try {
+          const connection = state.connection;
+          if (!connection) throw new Error("未连接到宿主服务");
+
+          const isNew = editingModelId === "__new__";
+          const updatedItem = {
+            id: modelDraft.id.trim(),
+            name: modelDraft.name.trim() || modelDraft.id.trim()
+          };
+          if (modelDraft.contextWindow && modelDraft.contextWindow.trim()) {
+            updatedItem.contextWindow = parseCapacity(modelDraft.contextWindow);
+          }
+          if (modelDraft.maxTokens && modelDraft.maxTokens.trim()) {
+            updatedItem.maxTokens = parseCapacity(modelDraft.maxTokens);
+          }
+
+          const inputModalities = [];
+          if (modelDraft.supportText) inputModalities.push("text");
+          if (modelDraft.supportImage) inputModalities.push("image");
+          if (inputModalities.length > 0) {
+            updatedItem.input = inputModalities;
+          }
+
+          if (modelDraft.reasoningEfforts && modelDraft.reasoningEfforts.length > 0) {
+            const effortDict = {};
+            for (const eff of modelDraft.reasoningEfforts) {
+              effortDict[eff] = eff;
+            }
+            updatedItem.reasoningEfforts = effortDict;
+          } else if (modelDraft.reasoningEfforts && modelDraft.reasoningEfforts.length === 0) {
+            updatedItem.reasoningEfforts = false;
+          }
+
+          let nextModels;
+          if (isNew) {
+            if (llmMeta.models.some(m => m.id === updatedItem.id)) {
+              throw new Error(`已存在 ID 为 ${updatedItem.id} 的模型`);
+            }
+            nextModels = [...llmMeta.models, updatedItem];
+          } else {
+            nextModels = llmMeta.models.map(m => m.id === editingModelId ? updatedItem : m);
+          }
+
+          const ops = [{ op: "set", path: [...llmMeta.settingsPath, "models"], value: nextModels }];
+          if (modelDraft.reasoningDefault) {
+            ops.push({ op: "set", path: [...llmMeta.settingsPath, "reasoning"], value: modelDraft.reasoningDefault });
+          } else {
+            ops.push({ op: "unset", path: [...llmMeta.settingsPath, "reasoning"] });
+          }
+
+          const res = await connection.api.settings.mutate({
+            ns: llmMeta.ns,
+            ops,
+            expectedRevision: llmMeta.revision
+          });
+
+          if (!res.result.ok) {
+            const errMsg = res.result.error?.message || (typeof res.result.error === "string" ? res.result.error : JSON.stringify(res.result.error)) || "保存模型失败";
+            throw new Error(errMsg);
+          }
+
+          setSuccessMsg(`已成功保存模型：${updatedItem.name || updatedItem.id}`);
+          setEditingModelId(null);
+          setModelDraft(null);
+          await loadProviderModels(true);
+        } catch (err) {
+          setError(err.message || String(err));
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const removeModel = async (modelId) => {
+        setSaving(true);
+        setError("");
+        setSuccessMsg("");
+        try {
+          const connection = state.connection;
+          if (!connection) throw new Error("未连接到宿主服务");
+          const nextModels = llmMeta.models.filter(m => m.id !== modelId);
+          const res = await connection.api.settings.mutate({
+            ns: llmMeta.ns,
+            ops: [{ op: "set", path: [...llmMeta.settingsPath, "models"], value: nextModels }],
+            expectedRevision: llmMeta.revision
+          });
+          if (!res.result.ok) throw new Error(res.result.error || "删除模型失败");
+          setSuccessMsg(`已删除模型：${modelId}`);
+          if (editingModelId === modelId) cancelEdit();
+          await loadProviderModels(true);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const resetDefaultModels = async () => {
+        setSaving(true);
+        setError("");
+        setSuccessMsg("");
+        try {
+          const connection = state.connection;
+          if (!connection) throw new Error("未连接到宿主服务");
+          const res = await connection.api.settings.mutate({
+            ns: llmMeta.ns,
+            ops: [{ op: "unset", path: [...llmMeta.settingsPath, "models"] }],
+            expectedRevision: llmMeta.revision
+          });
+          if (!res.result.ok) throw new Error(res.result.error || "重置失败");
+          setSuccessMsg("已恢复为默认模型目录");
+          cancelEdit();
+          await loadProviderModels(true);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      if (loading) return h("div", { style: { padding: 16 } }, "正在读取模型配置…");
+      if (!llmMeta) return h("div", { style: { padding: 16 } }, error || "无法读取该供应商的模型配置");
+
+      return h(
+        "div",
+        { className: "db-models-tab" },
+        h(
+          "div",
+          { className: "db-models-head" },
+          h("span", null, "管理此供应商的模型列表、上下文窗口、输入能力与推理等级配置。")
+        ),
+        h(
+          "div",
+          { className: "db-model-list" },
+          llmMeta.models.map(model => {
+            const isEditing = editingModelId === model.id;
+            return h(
+              "div",
+              { className: "db-model-card", key: model.id },
+              h(
+                "div",
+                { className: "db-row-line" },
+                h("span", { className: "db-model-id" }, model.id),
+                h("div", { className: "db-spacer" }),
+                h("button", { className: "db-quiet", type: "button", style: { height: 28, fontSize: 12, padding: "0 10px" }, onClick: () => isEditing ? cancelEdit() : startEdit(model) }, isEditing ? "收起" : "编辑"),
+                h("button", { className: "db-delete", type: "button", style: { height: 28, fontSize: 12, padding: "0 10px" }, onClick: () => removeModel(model.id), disabled: saving }, "删除")
+              ),
+              h(
+                "div",
+                { className: "db-row-meta" },
+                h("span", { className: "db-live" }),
+                model.name && model.name !== model.id && h("span", { className: "db-model-name" }, model.name),
+                model.contextWindow && h("span", { className: "db-model-tag" }, `上下文 ${formatCapacity(model.contextWindow)}`),
+                model.maxTokens && h("span", { className: "db-model-tag" }, `输出 ${formatCapacity(model.maxTokens)}`),
+                model.temperature !== undefined && h("span", { className: "db-model-tag" }, `温度 ${model.temperature}`),
+                model.topP !== undefined && h("span", { className: "db-model-tag" }, `TopP ${model.topP}`),
+                (Array.isArray(model.input) ? model.input.includes("image") : model.supportsImages) && h("span", { className: "db-model-tag" }, "支持图片"),
+                (Array.isArray(model.reasoningEfforts) ? model.reasoningEfforts.length > 0 : Boolean(model.reasoning || model.reasoningEffort)) &&
+                  h("span", { className: "db-model-tag" }, `推理 ${model.reasoningEffort ? `默认 ${model.reasoningEffort}` : "已开启"}`)
+              ),
+              isEditing &&
+                h(
+                  "form",
+                  { className: "db-model-editor db-form", onSubmit: saveModel },
+                  h(
+                    "div",
+                    { className: "db-field" },
+                    h("label", null, "模型 ID"),
+                    h("input", { type: "text", required: true, value: modelDraft.id, onChange: e => setModelDraft({ ...modelDraft, id: e.target.value }) })
+                  ),
+                  h(
+                    "div",
+                    { className: "db-field" },
+                    h("label", null, "显示名称"),
+                    h("input", { type: "text", value: modelDraft.name, onChange: e => setModelDraft({ ...modelDraft, name: e.target.value }) })
+                  ),
+                  h(
+                    "div",
+                    { className: "db-field" },
+                    h("label", null, "上下文窗口（Context Window）"),
+                    h("input", { type: "text", placeholder: "例如 128K、256K 或 131072", value: modelDraft.contextWindow, onChange: e => setModelDraft({ ...modelDraft, contextWindow: e.target.value }) })
+                  ),
+                  h(
+                    "div",
+                    { className: "db-field" },
+                    h("label", null, "最大输出 Token 数（Max Tokens）"),
+                    h("input", { type: "text", placeholder: "例如 8K、16K 或 8192", value: modelDraft.maxTokens, onChange: e => setModelDraft({ ...modelDraft, maxTokens: e.target.value }) })
+                  ),
+                  h(
+                    "div",
+                    { className: "db-field" },
+                    h("label", null, "输入能力"),
+                    h(
+                      "div",
+                      { className: "db-checkbox-group" },
+                      h(
+                        "label",
+                        { className: "db-checkbox-label" },
+                        h("input", {
+                          type: "checkbox",
+                          checked: Boolean(modelDraft.supportText),
+                          onChange: e => setModelDraft({ ...modelDraft, supportText: e.target.checked })
+                        }),
+                        "文本"
+                      ),
+                      h(
+                        "label",
+                        { className: "db-checkbox-label" },
+                        h("input", {
+                          type: "checkbox",
+                          checked: Boolean(modelDraft.supportImage),
+                          onChange: e => setModelDraft({ ...modelDraft, supportImage: e.target.checked })
+                        }),
+                        "图片"
+                      )
+                    )
+                  ),
+                  h(
+                    "div",
+                    { className: "db-field" },
+                    h("label", null, "默认推理等级"),
+                    h(
+                      "select",
+                      {
+                        className: "db-select",
+                        value: modelDraft.reasoningDefault || "",
+                        onChange: e => {
+                          const val = e.target.value;
+                          const nextEfforts = val && !modelDraft.reasoningEfforts.includes(val)
+                            ? [...modelDraft.reasoningEfforts, val]
+                            : modelDraft.reasoningEfforts;
+                          setModelDraft({ ...modelDraft, reasoningDefault: val, reasoningEfforts: nextEfforts });
+                        }
+                      },
+                      h("option", { value: "" }, "不设置默认 / 使用系统默认"),
+                      ...ALL_REASONING_EFFORTS.map(eff => h("option", { key: eff.id, value: eff.id }, eff.label))
+                    )
+                  ),
+                  h(
+                    "div",
+                    { className: "db-field" },
+                    h(
+                      "div",
+                      { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } },
+                      h("label", null, "对话框可选推理等级"),
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          className: "db-quiet",
+                          style: { height: 24, fontSize: 11, padding: "0 8px", borderRadius: 12 },
+                          onClick: () => {
+                            const allIds = ALL_REASONING_EFFORTS.map(e => e.id);
+                            const isAllSelected = modelDraft.reasoningEfforts.length === allIds.length;
+                            setModelDraft({
+                              ...modelDraft,
+                              reasoningEfforts: isAllSelected ? [] : allIds,
+                              reasoningDefault: isAllSelected ? "" : (modelDraft.reasoningDefault || "high")
+                            });
+                          }
+                        },
+                        modelDraft.reasoningEfforts.length === ALL_REASONING_EFFORTS.length ? "全不选" : "全选"
+                      )
+                    ),
+                    h(
+                      "div",
+                      { className: "db-checkbox-group", style: { flexWrap: "wrap", gap: "10px 16px", marginTop: 6 } },
+                      ...ALL_REASONING_EFFORTS.map(eff => {
+                        const checked = modelDraft.reasoningEfforts.includes(eff.id);
+                        return h(
+                          "label",
+                          { className: "db-checkbox-label", key: eff.id },
+                          h("input", {
+                            type: "checkbox",
+                            checked,
+                            onChange: e => {
+                              const next = e.target.checked
+                                ? [...modelDraft.reasoningEfforts, eff.id]
+                                : modelDraft.reasoningEfforts.filter(id => id !== eff.id);
+                              setModelDraft({
+                                ...modelDraft,
+                                reasoningEfforts: next,
+                                reasoningDefault: !e.target.checked && modelDraft.reasoningDefault === eff.id ? (next[0] || "") : modelDraft.reasoningDefault
+                              });
+                            }
+                          }),
+                          eff.label
+                        );
+                      })
+                    ),
+                    h("p", { className: "db-field-help" }, "勾选的等级将展示在主对话输入框的模型切换菜单中，用户可自由切换。")
+                  ),
+                  h(
+                    "div",
+                    { className: "db-form-actions" },
+                    h("button", { className: "db-quiet", type: "button", onClick: cancelEdit }, "取消"),
+                    h("button", { className: "db-primary", type: "submit", disabled: saving }, saving ? "保存中…" : "保存")
+                  )
+                )
+            );
+          })
+        ),
+        error && h("p", { className: "db-message error", role: "status" }, error),
+        successMsg && h("p", { className: "db-message", role: "status" }, successMsg)
+      );
+    }
+
     function SettingsSection() {
       try {
-      const [config, setConfig] = React.useState(null); const [message, setMessage] = React.useState(""); const [messageKind, setMessageKind] = React.useState("ok"); const [statuses, setStatuses] = React.useState({}); const [editing, setEditing] = React.useState(null); const [modelProviders, setModelProviders] = React.useState([]); const [testing, setTesting] = React.useState(false); const [testResult, setTestResult] = React.useState(null); const [externalStatuses, setExternalStatuses] = React.useState([]); const [externalEditing, setExternalEditing] = React.useState(null); const [externalLoading, setExternalLoading] = React.useState(false); const [advancedOpen, setAdvancedOpen] = React.useState(false); const [advancedTab, setAdvancedTab] = React.useState("health"); const [advancedProvider, setAdvancedProvider] = React.useState(null); const [externalPreview, setExternalPreview] = React.useState(null); const [externalPreviewing, setExternalPreviewing] = React.useState(false); const [externalPreviewStatus, setExternalPreviewStatus] = React.useState(null); const [externalResultOpen, setExternalResultOpen] = React.useState(false); const [externalResultError, setExternalResultError] = React.useState("");
-      const blankForm = { id: "", name: "", endpoint: "", responsePath: "$.remaining ?? $.quota?.remaining ?? $.balance", currency: "$.unit ?? $.quota?.unit ?? \"USD\"", apiKey: "", credentialRef: "", route: "", method: "GET", headersText: "", endpointBase: "", timeoutSeconds: 10, queryIntervalMinutes: 30, conversionEnabled: false, valueDivisor: 1 };
-      const [form, setForm] = React.useState(blankForm);
-       const blankExternalForm = { id: "", name: "", endpoint: "", requestType: "custom", requestMethod: "GET", intervalSeconds: 60, timeoutSeconds: 10, modelListPath: "", model: "", status: "", availability: "", ttft: "", response: "", history: "", historyAt: "", historyStatus: "", error: "", modelTransform: "identity", statusTransform: "status", availabilityTransform: "percent", ttftTransform: "number", responseTransform: "number", historyTransform: "identity", historyAtTransform: "number", historyStatusTransform: "status", errorTransform: "identity", ttftUnit: "ms", responseUnit: "ms" };
-       const [externalForm, setExternalForm] = React.useState(blankExternalForm); const updateExternalForm = (next, mappingChanged = false) => { if (mappingChanged) { setExternalPreviewStatus(null); setExternalResultOpen(false); setExternalTestState("idle"); setExternalTestMessage("映射已变更，请重新测试"); } setExternalForm(next); }; const [externalCustomFields, setExternalCustomFields] = React.useState([]); const [externalFieldEnabled, setExternalFieldEnabled] = React.useState({ model: true, status: true, availability: true, ttft: true, response: true, history: true, historyAt: true, historyStatus: true, error: true }); const [externalTestState, setExternalTestState] = React.useState("idle"); const [externalTestMessage, setExternalTestMessage] = React.useState("");
-       const loadExternalStatuses = (force = false) => { setExternalLoading(true); const query = force ? "?force=1" : ""; return api(`/external-status${query}`).then(data => setExternalStatuses(data.sources || [])).catch(() => setExternalStatuses([])).finally(() => setExternalLoading(false)); };
-      const loadSummary = () => api("/summary").then(data => setStatuses(Object.fromEntries(data.providers.map(p => [p.id, p])))).catch(() => {}); React.useEffect(() => { api("/config").then(data => setConfig(data.config)).catch(error => { setMessage(error.message); setMessageKind("error"); }); loadSummary(); loadExternalStatuses(); }, []);
-      React.useEffect(() => { const connection = state.connection; if (!connection) return; Promise.all([connection.api.llm.providers({}), connection.api.settings.describe({})]).then(([directory, settings]) => { if (!directory.result.ok || !settings.result.ok) throw new Error("无法读取模型供应商"); const namespaces = new Map(settings.result.value.namespaces.map(item => [item.ns, item])); const atPath = (value, path) => path.reduce((current, key) => current && typeof current === "object" ? current[key] : undefined, value); setModelProviders(directory.result.value.providers.filter(entry => { const namespace = namespaces.get(entry.settingsNs); return entry.active && namespace && (entry.settingsPath.length === 0 || atPath(namespace.value, entry.settingsPath) !== undefined); }).map(entry => { const namespace = namespaces.get(entry.settingsNs); const profile = atPath(namespace.value, entry.settingsPath) || namespace.value; return { id: entry.provider, name: entry.displayName || entry.provider, credentialRef: typeof profile?.apiKeyEnv === "string" ? profile.apiKeyEnv : "", baseURL: typeof profile?.baseURL === "string" ? profile.baseURL : "" }; })); }).catch(() => setModelProviders([])); }, []);
-      const boundRoute = (id) => Object.entries(config?.bindings || {}).find(([, bid]) => bid === id)?.[0] || "";
-      const savePreferences = async (next) => { const preferences = { statusBar: config.statusBar, defaultProviderId: Object.prototype.hasOwnProperty.call(next, "defaultProviderId") ? next.defaultProviderId : config.defaultProviderId ?? null, bindings: next.bindings ?? config.bindings }; await api("/preferences", { method: "POST", body: JSON.stringify(preferences) }); const nextConfig = { ...config, ...next }; setConfig(nextConfig); state.config = nextConfig; refreshBar(); };
-      const bindRoute = async (id, route) => {
-        const next = { ...(config.bindings || {}) };
-        for (const [key, bid] of Object.entries(next)) if (bid === id) delete next[key];
-        if (route) next[route] = id;
-        try { await savePreferences({ bindings: next }); setMessage(route ? `已绑定到 ${route}` : "已解除绑定"); loadSummary(); } catch (error) { setMessage(error.message); setMessageKind("error"); }
-      };
-      const balanceMeta = (id) => {
-        const s = statuses[id]; if (!s) return null;
-        if (s.status !== "ok") return [h("span", { className: "db-meta-error" }, s.error || "查询失败")];
-        const out = (s.usageWindows || []).length ? [] : [h("span", { key: "bal" }, formatMoney(s.available, s.currency))];
-        for (const item of s.usageWindows || []) { const label = item.type === "rolling" ? "滚动" : item.type === "weekly" ? "本周" : "本月"; out.push(h("span", { key: item.type, title: item.resetAt ? `重置于 ${item.resetAt}` : undefined }, `${label} ${item.percent}%`)); }
-        if (!(s.usageWindows || []).length) out.push(h("span", { key: "note", className: "db-meta-note" }, "仅余额"));
-        return out;
-      };
-      if (!config) return h("div", { style: { padding: 16 } }, message || "正在加载…");
-      const draftPayload = () => { const preset = form.preset || (form.route === "opencode-go" || form.id === "opencode-go" ? "opencode-go" : form.route === "deepseek" || form.id === "deepseek" || form.id === "deepseek-official" ? "deepseek" : ""); const body = { ...form, ...(preset ? { preset } : {}), apiKey: form.apiKey || undefined, method: form.method === "POST" ? "POST" : "GET", valueDivisor: form.conversionEnabled ? Math.max(1, Number(form.valueDivisor) || 1) : 1 }; delete body.conversionEnabled; if (body.preset) { delete body.endpoint; delete body.endpointBase; delete body.responsePath; } else if (body.endpoint && body.endpoint.startsWith("/") && body.endpointBase) body.endpoint = body.endpointBase.replace(/\/+$/, "") + body.endpoint; if (form.headersText.trim()) { body.headers = Object.fromEntries(form.headersText.split(/[\r\n]+/).map(line => { const at = line.indexOf(":"); return at < 1 ? [] : [line.slice(0, at).trim(), line.slice(at + 1).trim()]; }).filter(kv => kv.length === 2 && kv[0] && kv[1])); } return body; };
-      const testProvider = async () => { setTesting(true); setTestResult(null); try { const data = await api("/provider/test", { method: "POST", body: JSON.stringify(draftPayload()) }); setTestResult(data.result); } catch (error) { setTestResult({ status: "error", error: error.message }); } finally { setTesting(false); } };
-      const saveProvider = async (event) => { event.preventDefault(); try { const body = draftPayload(); const data = await api("/provider", { method: "POST", body: JSON.stringify(body) }); let bindings = { ...(config.bindings || {}) }; if (form.route) { for (const [key, bid] of Object.entries(bindings)) if (bid === data.provider.id) delete bindings[key]; bindings[form.route] = data.provider.id; await api("/preferences", { method: "POST", body: JSON.stringify({ statusBar: config.statusBar, bindings }) }); } const saved = { ...data.provider, method: body.method, headers: body.headers || {}, ...(body.valueDivisor ? { valueDivisor: Number(body.valueDivisor) } : {}) }; const nextConfig = { ...config, providers: [...config.providers.filter(item => item.id !== data.provider.id), saved], bindings }; setConfig(nextConfig); state.config = nextConfig; setForm(blankForm); setEditing(null); setMessage(form.route ? `已保存并绑定到 ${modelProviders.find(item => item.id === form.route)?.name || form.route}` : form.credentialRef ? "供应商已保存；将复用模型页的凭据" : "供应商已保存；密钥已写入系统钥匙串"); loadSummary(); refreshBar(); } catch (error) { setMessage(error.message); setMessageKind("error"); } };
-      const beginAdd = (source) => { setForm(source ? { ...blankForm, id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64), name: source.name, credentialRef: source.credentialRef, route: source.id, endpointBase: source.baseURL || "", endpoint: "/usage" } : blankForm); setEditing(source?.id || "__new"); };
-      const beginPreset = (source, preset = "deepseek") => { setForm({ ...blankForm, id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64), name: source.name, credentialRef: source.credentialRef, preset, route: source.id, endpointBase: "", endpoint: "" }); setEditing(source.id); };
-      const beginNeco = (source) => { const base = String(source.baseURL || "").replace(/\/+$/, ""); const endpoint = /\/v1$/i.test(base) ? "/usage" : "/v1/usage"; setForm({ ...blankForm, id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64), name: source.name, credentialRef: source.credentialRef, route: source.id, endpointBase: base, endpoint, responsePath: "$.wallet.remaining", currency: "USD", headersText: "Content-Type: application/json\nUser-Agent: cc-switch/1.0", conversionEnabled: true, valueDivisor: 500000 }); setEditing(source.id); };
-      const beginEdit = (provider) => { const route = boundRoute(provider.id); const mp = modelProviders.find(m => m.id === route || m.id === provider.id); setForm({ ...provider, apiKey: "", headersText: toHeadersText(provider), method: provider.method || "GET", route, endpointBase: mp?.baseURL || "", timeoutSeconds: provider.timeoutSeconds ?? 10, queryIntervalMinutes: provider.queryIntervalMinutes ?? 30, valueDivisor: provider.valueDivisor ?? (provider.id === "neco" ? 500000 : 1), conversionEnabled: Number(provider.valueDivisor ?? (provider.id === "neco" ? 500000 : 1)) !== 1 }); setEditing(route || provider.id); };
-      const remove = async (id) => { try { await api(`/provider/${encodeURIComponent(id)}`, { method: "DELETE" }); const nextConfig = { ...config, providers: config.providers.filter(item => item.id !== id), defaultProviderId: config.defaultProviderId === id ? null : config.defaultProviderId, bindings: Object.fromEntries(Object.entries(config.bindings || {}).filter(([, providerId]) => providerId !== id)) }; setConfig(nextConfig); state.config = nextConfig; if (state.selectedProviderId === id) { state.selectedProviderId = resolveSelectedProvider(nextConfig.providers, state.sessionId, nextConfig.defaultProviderId); if (state.selectedProviderId) sessionStorage.setItem(selectionKey(state.sessionId), state.selectedProviderId); else sessionStorage.removeItem(selectionKey(state.sessionId)); } setMessage("供应商已删除"); } catch (error) { setMessage(error.message); setMessageKind("error"); } };
-      const field = (key, label, type = "text", wide = false) => h("div", { className: `db-field${wide ? " wide" : ""}` }, h("label", { htmlFor: `db-${key}` }, label), h("input", { id: `db-${key}`, type: key === "endpoint" && form.endpointBase ? "text" : type, required: key !== "apiKey", min: key === "timeoutSeconds" ? 1 : key === "queryIntervalMinutes" ? 0 : undefined, max: key === "timeoutSeconds" ? 300 : key === "queryIntervalMinutes" ? 1440 : undefined, step: type === "number" ? 1 : undefined, value: form[key], onChange: event => setForm({ ...form, [key]: event.target.value }) }));
-      const toHeadersText = (provider) => Object.entries(provider.headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n");
-      const headerRows = () => form.headersText ? form.headersText.split(/\r?\n/).map(line => { const at = line.indexOf(":"); return at < 0 ? { name: line, value: "" } : { name: line.slice(0, at).trim(), value: line.slice(at + 1).trim() }; }) : [];
-      // 请求头使用结构化行编辑，保存时仍转换为原有文本格式，保持配置兼容。
-      const updateHeaderRows = (rows) => setForm({ ...form, headersText: rows.map(row => `${row.name}: ${row.value}`).join("\n") });
-      const headersEditor = () => { const rows = headerRows(); return h("div", { className: "db-field wide" }, h("label", null, "请求头（Authorization 自动注入，无需填写）"), h("div", { className: "db-header-list" }, rows.map((row, index) => h("div", { className: "db-header-row", key: index }, h("input", { type: "text", placeholder: "名称", value: row.name, onChange: event => { const next = [...rows]; next[index] = { ...row, name: event.target.value }; updateHeaderRows(next); } }), h("input", { type: "text", placeholder: "值", value: row.value, onChange: event => { const next = [...rows]; next[index] = { ...row, value: event.target.value }; updateHeaderRows(next); } }), h("button", { className: "db-header-remove", type: "button", title: "删除请求头", "aria-label": "删除请求头", onClick: () => updateHeaderRows(rows.filter((_, rowIndex) => rowIndex !== index)) }, h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))))), h("button", { className: "db-header-add", type: "button", onClick: () => updateHeaderRows([...rows, { name: "", value: "" }]) }, "+ 添加请求头"))); };
-      // 编辑区内嵌在当前供应商卡片中，保持其余供应商可见并与模型设置的展开方式一致。
-      const inlineEditor = () => h("div", { className: "db-inline-editor" }, h("form", { className: "db-form", onSubmit: saveProvider }, field("name", "显示名称"), form.preset === "deepseek" ? h("p", { className: "db-message db-field wide" }, "已使用 DeepSeek 官方余额接口，无需填写查询地址或字段路径。") : form.preset === "opencode-go" ? h("p", { className: "db-message db-field wide" }, "已使用 OpenCode Go 官方额度接口，自动查询 5 小时、每周和每月用量。") : [field("endpoint", form.endpointBase ? "余额查询地址（以 / 开头时将拼接基础地址）" : "余额查询 HTTPS 地址", "url", true), form.endpointBase && h("p", { className: "db-message db-field wide" }, "已复用模型页基础地址：", form.endpointBase, "，仅需在下方追加路径（如 /usage）；或保留为完整地址。" ), h("div", { className: "db-field" }, h("label", { htmlFor: "db-method" }, "请求方式"), h("select", { id: "db-method", className: "db-select", value: form.method, onChange: event => setForm({ ...form, method: event.target.value }) }, h("option", { value: "GET" }, "GET"), h("option", { value: "POST" }, "POST（无请求体）"))), field("responsePath", "余额 JSON 路径"), h("p", { className: "db-field-help" }, "支持 ?? 回退链与可选链，如 $.remaining ?? $.quota?.remaining ?? $.balance；根节点也可写作 response"), field("currency", "币种"), h("p", { className: "db-field-help" }, "可填固定币种（如 USD），或用表达式读取响应单位，如 $.unit ?? \"USD\""), h("div", { className: "db-field wide" }, h("div", { style: { display: "flex", alignItems: "center", gap: 10 } }, h("label", null, "金额换算"), h("button", { className: `db-toggle${form.conversionEnabled ? " on" : ""}`, type: "button", "aria-pressed": form.conversionEnabled, onClick: () => setForm({ ...form, conversionEnabled: !form.conversionEnabled }) }, h("i"))), h("p", { className: "db-field-help" }, "接口返回的是额度单位而非实际金额时开启。")), form.conversionEnabled && h("div", { className: "db-field wide" }, field("valueDivisor", "换算除数", "number", true), h("p", { className: "db-field-help" }, "接口原始值 ÷ 换算除数 = 最终显示金额")), headersEditor()], !form.credentialRef && field("apiKey", "API Key（仅写入钥匙串）", "password", true), form.credentialRef && h("p", { className: "db-message db-field wide" }, "已复用模型页凭据：", form.credentialRef), field("timeoutSeconds", "超时时间（秒）", "number"), field("queryIntervalMinutes", "自动查询间隔（分钟，0 表示不自动查询）", "number"), testResult && h("p", { className: `db-message${testResult.status === "error" ? " error" : ""}`, role: "status" }, testResult.status === "error" ? testResult.error : testResult.usageWindows?.length ? testResult.usageWindows.map(item => `${item.type}: ${item.percent}%`).join(" · ") : `${formatMoney(testResult.available, testResult.currency)}（测试成功，尚未保存）`), h("div", { className: "db-form-actions" }, h("button", { className: "db-quiet", type: "button", onClick: () => setEditing(null) }, "取消"), h("button", { className: "db-quiet", type: "button", disabled: testing, onClick: testProvider }, testing ? "测试中…" : "测试"), h("button", { className: "db-primary", type: "submit" }, "保存"))));
-      const externalPayload = () => { let generatedName = externalForm.name; try { generatedName = generatedName || new URL(externalForm.endpoint).hostname; } catch {} return { id: externalForm.id || `source-${Date.now().toString(36)}`, name: generatedName || "外部监测源", providerId: advancedProvider?.id || externalForm.providerId || "", endpoint: externalForm.endpoint, requestType: externalForm.requestType || "custom", method: externalForm.requestMethod || "GET", intervalSeconds: Number(externalForm.intervalSeconds) || 60, timeoutSeconds: Number(externalForm.timeoutSeconds) || 10, modelListPath: externalForm.modelListPath, fields: Object.fromEntries(Object.entries({ model: externalForm.model, status: externalForm.status, availability: externalForm.availability, ttft: externalForm.ttft, response: externalForm.response, history: externalForm.history, historyAt: externalForm.historyAt, historyStatus: externalForm.historyStatus, error: externalForm.error }).map(([key, value]) => [key, externalFieldEnabled[key] ? value : ""])), enabledFields: externalFieldEnabled, customFields: externalCustomFields.filter(field => field.name && field.path).map(field => ({ name: field.name, path: field.path, transform: ["identity", "number", "percent", "status"].includes(field.transform) ? field.transform : "identity" })), transforms: { model: externalForm.modelTransform, status: externalForm.statusTransform, availability: externalForm.availabilityTransform, ttft: externalForm.ttftTransform, response: externalForm.responseTransform, history: externalForm.historyTransform, historyAt: externalForm.historyAtTransform, historyStatus: externalForm.historyStatusTransform, error: externalForm.errorTransform }, ttftUnit: externalForm.ttftUnit, responseUnit: externalForm.responseUnit, preview: externalPreview?.preview ?? externalForm.preview, previewKeys: externalPreview?.keys ?? externalForm.previewKeys }; };
-       const externalField = (key, label, type = "text") => h("div", { className: "db-field" }, h("label", { htmlFor: `db-external-${key}` }, label), h("input", { id: `db-external-${key}`, type, value: externalForm[key], required: key === "endpoint", min: key === "intervalSeconds" ? 5 : undefined, onChange: event => setExternalForm({ ...externalForm, [key]: event.target.value }) }));
+        const [config, setConfig] = React.useState(null);
+        const [message, setMessage] = React.useState("");
+        const [messageKind, setMessageKind] = React.useState("ok");
+        const [statuses, setStatuses] = React.useState({});
+        const latestConfigRef = React.useRef(null);
+        const balanceSummaryGeneration = React.useRef(0);
+        const [editing, setEditing] = React.useState(null);
+        const modelProviders = useModelProviders();
+        const [importMenuOpen, setImportMenuOpen] = React.useState(false);
+        const importMenuRef = React.useRef(null);
+        const [testing, setTesting] = React.useState(false);
+        const [testResult, setTestResult] = React.useState(null);
+        const [externalStatuses, setExternalStatuses] = React.useState([]);
+        const [externalEditing, setExternalEditing] = React.useState(null);
+        const [externalLoading, setExternalLoading] = React.useState(false);
+        const [advancedOpen, setAdvancedOpen] = React.useState(false);
+        const [advancedTab, setAdvancedTab] = React.useState("models");
+        const [advancedProvider, setAdvancedProvider] = React.useState(null);
+        const [externalPreview, setExternalPreview] = React.useState(null);
+        const [externalPreviewing, setExternalPreviewing] = React.useState(false);
+        const [externalPreviewStatus, setExternalPreviewStatus] = React.useState(null);
+        const externalPreviewCache = React.useRef(new Map());
+        const externalPreviewLoadGeneration = React.useRef(0);
+        const [externalResultOpen, setExternalResultOpen] = React.useState(false);
+        const [externalResultError, setExternalResultError] = React.useState("");
+        const [bindingSlot, setBindingSlot] = React.useState(null);
+        const [externalShowAllPreview, setExternalShowAllPreview] = React.useState(false);
+
+        React.useEffect(() => {
+          if (!importMenuOpen) return;
+          const onPointerDown = (event) => {
+            if (importMenuRef.current && !importMenuRef.current.contains(event.target) && !event.target.closest?.(".db-import-wrap")) {
+              setImportMenuOpen(false);
+            }
+          };
+          document.addEventListener("pointerdown", onPointerDown);
+          return () => document.removeEventListener("pointerdown", onPointerDown);
+        }, [importMenuOpen]);
+
+        const blankForm = {
+          id: "",
+          name: "",
+          endpoint: "",
+          balanceEnabled: true,
+          responsePath: "$.remaining ?? $.quota?.remaining ?? $.balance",
+          currency: "$.unit ?? $.quota?.unit ?? \"USD\"",
+          apiKey: "",
+          credentialRef: "",
+          route: "",
+          method: "GET",
+          headersText: "",
+          endpointBase: "",
+          timeoutSeconds: 10,
+          queryIntervalMinutes: 30,
+          conversionEnabled: false,
+          valueDivisor: 1
+        };
+        const [form, setForm] = React.useState(blankForm);
+
+        const blankExternalForm = {
+          id: "",
+          name: "",
+          endpoint: "",
+          enabled: false,
+          requestType: "custom",
+          requestMethod: "GET",
+          intervalSeconds: 60,
+          timeoutSeconds: 10,
+          modelListPath: "",
+          model: "",
+          status: "",
+          availability: "",
+          ttft: "",
+          response: "",
+          history: "",
+          historyAt: "",
+          historyStatus: "",
+          historyError: "",
+          error: "",
+          modelTransform: "identity",
+          statusTransform: "status",
+          availabilityTransform: "percent",
+          ttftTransform: "number",
+          responseTransform: "number",
+          historyTransform: "identity",
+          historyAtTransform: "number",
+          historyStatusTransform: "status",
+          historyErrorTransform: "identity",
+          errorTransform: "identity",
+          ttftUnit: "ms",
+          responseUnit: "ms"
+        };
+        const [externalForm, setExternalForm] = React.useState(blankExternalForm);
+
+        const updateExternalForm = (next, mappingChanged = false) => {
+          if (mappingChanged) {
+            setExternalPreviewStatus(null);
+            const cached = next.id && externalPreviewCache.current.get(next.id);
+            if (cached) externalPreviewCache.current.set(next.id, { ...cached, normalized: null });
+            setExternalResultOpen(false);
+            setExternalTestState("idle");
+            setExternalTestMessage("映射已变更，请重新测试");
+          }
+          setExternalForm(next);
+        };
+
+        const [externalCustomFields, setExternalCustomFields] = React.useState([]);
+        const [externalFieldEnabled, setExternalFieldEnabled] = React.useState({
+          model: true,
+          status: true,
+          availability: true,
+          ttft: true,
+          response: true,
+          history: true,
+          historyAt: true,
+          historyStatus: true,
+          historyError: true,
+          error: true
+        });
+        const [externalTestState, setExternalTestState] = React.useState("idle");
+        const [externalTestMessage, setExternalTestMessage] = React.useState("");
+
+        const loadExternalStatuses = (force = false) => {
+          setExternalLoading(true);
+          const query = force ? "?force=1" : "";
+          return api(`/external-status${query}`)
+            .then(data => setExternalStatuses(data.sources || []))
+            .catch(() => setExternalStatuses([]))
+            .finally(() => setExternalLoading(false));
+        };
+
+        const loadSummary = () => {
+          const generation = ++balanceSummaryGeneration.current;
+          return api("/summary")
+            .then(data => {
+              if (generation !== balanceSummaryGeneration.current) return;
+              const currentConfig = latestConfigRef.current;
+              setStatuses(Object.fromEntries(data.providers.map(provider => {
+                const configured = currentConfig?.providers?.find(item => item.id === provider.id);
+                return [provider.id, configured?.balanceEnabled === false ? { id: provider.id, name: provider.name, status: "disabled" } : provider];
+              })));
+            })
+            .catch(() => {});
+        };
+
+        React.useEffect(() => {
+          latestConfigRef.current = config;
+        }, [config]);
+
+        React.useEffect(() => {
+          api("/config")
+            .then(data => setConfig(data.config))
+            .catch(error => {
+              setMessage(error.message);
+              setMessageKind("error");
+            });
+          loadSummary();
+          loadExternalStatuses();
+        }, []);
+
+        const boundRoute = React.useCallback(
+          (id) => Object.entries(config?.bindings || {}).find(([, bid]) => bid === id)?.[0] || "",
+          [config?.bindings]
+        );
+
+        const savePreferences = async (next) => {
+          const preferences = {
+            statusBar: config.statusBar,
+            defaultProviderId: Object.prototype.hasOwnProperty.call(next, "defaultProviderId")
+              ? next.defaultProviderId
+              : config.defaultProviderId ?? null,
+            bindings: next.bindings ?? config.bindings
+          };
+          await api("/preferences", { method: "POST", body: JSON.stringify(preferences) });
+          const nextConfig = { ...config, ...next };
+          setConfig(nextConfig);
+          state.config = nextConfig;
+          refreshBar();
+        };
+
+        const balanceMeta = (id) => {
+          const s = statuses[id];
+          if (!s) return null;
+          if (s.status === "disabled") return [h("span", { className: "db-meta-note" }, "余额监测已关闭")];
+          if (s.status !== "ok") return [h("span", { className: "db-meta-error" }, s.error || "查询失败")];
+          const out = (s.usageWindows || []).length ? [] : [h("span", { key: "bal" }, formatMoney(s.available, s.currency))];
+          for (const item of s.usageWindows || []) {
+            const label = item.type === "rolling" ? "滚动" : item.type === "weekly" ? "本周" : "本月";
+            out.push(h("span", { key: item.type, title: item.resetAt ? `重置于 ${item.resetAt}` : undefined }, `${label} ${item.percent}%`));
+          }
+          if (!(s.usageWindows || []).length) out.push(h("span", { key: "note", className: "db-meta-note" }, "仅余额"));
+          return out;
+        };
+
+        if (!config) return h("div", { style: { padding: 16 } }, message || "正在加载…");
+
+        const draftPayload = () => {
+          const preset = form.preset || (form.route === "opencode-go" || form.id === "opencode-go" ? "opencode-go" : form.route === "deepseek" || form.id === "deepseek" || form.id === "deepseek-official" ? "deepseek" : "");
+          const body = {
+            ...form,
+            ...(preset ? { preset } : {}),
+            apiKey: form.apiKey || undefined,
+            method: form.method === "POST" ? "POST" : "GET",
+            valueDivisor: form.conversionEnabled ? Math.max(1, Number(form.valueDivisor) || 1) : 1
+          };
+          delete body.conversionEnabled;
+          if (body.preset) {
+            delete body.endpoint;
+            delete body.endpointBase;
+            delete body.responsePath;
+          } else if (body.endpoint && body.endpoint.startsWith("/") && body.endpointBase) {
+            body.endpoint = body.endpointBase.replace(/\/+$/, "") + body.endpoint;
+          }
+          if (form.headersText.trim()) {
+            body.headers = Object.fromEntries(
+              form.headersText
+                .split(/[\r\n]+/)
+                .map(line => {
+                  const at = line.indexOf(":");
+                  return at < 1 ? [] : [line.slice(0, at).trim(), line.slice(at + 1).trim()];
+                })
+                .filter(kv => kv.length === 2 && kv[0] && kv[1])
+            );
+          }
+          return body;
+        };
+
+        const testProvider = async () => {
+          setTesting(true);
+          setTestResult(null);
+          try {
+            const data = await api("/provider/test", { method: "POST", body: JSON.stringify(draftPayload()) });
+            setTestResult(data.result);
+          } catch (error) {
+            setTestResult({ status: "error", error: error.message });
+          } finally {
+            setTesting(false);
+          }
+        };
+
+        const saveProvider = async (event) => {
+          event.preventDefault();
+          try {
+            const body = draftPayload();
+            const data = await api("/provider", { method: "POST", body: JSON.stringify(body) });
+            let bindings = { ...(config.bindings || {}) };
+            if (form.route) {
+              for (const [key, bid] of Object.entries(bindings)) {
+                if (bid === data.provider.id) delete bindings[key];
+              }
+              bindings[form.route] = data.provider.id;
+              await api("/preferences", { method: "POST", body: JSON.stringify({ statusBar: config.statusBar, bindings }) });
+            }
+            const saved = {
+              ...data.provider,
+              method: body.method,
+              headers: body.headers || {},
+              ...(body.valueDivisor ? { valueDivisor: Number(body.valueDivisor) } : {})
+            };
+            const nextConfig = {
+              ...config,
+              providers: [...config.providers.filter(item => item.id !== data.provider.id), saved],
+              bindings
+            };
+            setConfig(nextConfig);
+            latestConfigRef.current = nextConfig;
+            state.config = nextConfig;
+            state.requestGeneration += 1;
+            balanceSummaryGeneration.current += 1;
+            setForm(blankForm);
+            setEditing(null);
+            setMessage(
+              form.route
+                ? `已保存并绑定到 ${modelProviders.find(item => item.id === form.route)?.name || form.route}`
+                : form.credentialRef
+                  ? "供应商已保存；将复用模型页的凭据"
+                  : "供应商已保存；密钥已写入系统钥匙串"
+            );
+            if (saved.balanceEnabled === false) {
+              const disabled = { id: saved.id, name: saved.name, status: "disabled" };
+              setStatuses(current => ({ ...current, [saved.id]: disabled }));
+              state.providers = state.providers.some(item => item.id === saved.id)
+                ? state.providers.map(item => item.id === saved.id ? disabled : item)
+                : [...state.providers, disabled];
+              renderBar(nextConfig, state.providers);
+            } else {
+              loadSummary();
+              refreshBar();
+            }
+          } catch (error) {
+            setMessage(error.message);
+            setMessageKind("error");
+          }
+        };
+
+        const beginAdd = (source) => {
+          setForm(
+            source
+              ? {
+                  ...blankForm,
+                  id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
+                  name: source.name,
+                  credentialRef: source.credentialRef,
+                  route: source.id,
+                  endpointBase: source.baseURL || "",
+                  endpoint: "/usage"
+                }
+              : blankForm
+          );
+          setEditing(source?.id || "__new");
+          setImportMenuOpen(false);
+        };
+
+        const beginPreset = (source, preset = "deepseek") => {
+          const id = source?.id || preset;
+          const name = source?.name || (preset === "deepseek" ? "DeepSeek" : "OpenCode Go");
+          setForm({
+            ...blankForm,
+            id: id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
+            name,
+            credentialRef: source?.credentialRef || "",
+            preset,
+            route: source?.id || "",
+            endpointBase: "",
+            endpoint: ""
+          });
+          setEditing(id);
+          setImportMenuOpen(false);
+        };
+
+        const beginNeco = (source) => {
+          const base = String(source.baseURL || "").replace(/\/+$/, "");
+          const endpoint = /\/v1$/i.test(base) ? "/usage" : "/v1/usage";
+          setForm({
+            ...blankForm,
+            id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
+            name: source.name,
+            credentialRef: source.credentialRef,
+            route: source.id,
+            endpointBase: base,
+            endpoint,
+            responsePath: "$.wallet.remaining",
+            currency: "USD",
+            headersText: "Content-Type: application/json\nUser-Agent: cc-switch/1.0",
+            conversionEnabled: true,
+            valueDivisor: 500000
+          });
+          setEditing(source.id);
+          setImportMenuOpen(false);
+        };
+
+        const beginEdit = (provider) => {
+          const route = boundRoute(provider.id);
+          const editKey = route || provider.id;
+          if (editing === editKey) {
+            setEditing(null);
+            setForm(blankForm);
+            return;
+          }
+          const mp = modelProviders.find(m => m.id === route || m.id === provider.id);
+          setForm({
+            ...provider,
+            apiKey: "",
+            headersText: toHeadersText(provider),
+            method: provider.method || "GET",
+            route,
+            endpointBase: mp?.baseURL || "",
+            timeoutSeconds: provider.timeoutSeconds ?? 10,
+            queryIntervalMinutes: provider.queryIntervalMinutes ?? 30,
+            balanceEnabled: provider.balanceEnabled !== false,
+            valueDivisor: provider.valueDivisor ?? (provider.id === "neco" ? 500000 : 1),
+            conversionEnabled: Number(provider.valueDivisor ?? (provider.id === "neco" ? 500000 : 1)) !== 1
+          });
+          setEditing(editKey);
+          setImportMenuOpen(false);
+        };
+
+        const remove = async (id) => {
+          try {
+            await api(`/provider/${encodeURIComponent(id)}`, { method: "DELETE" });
+            const nextConfig = {
+              ...config,
+              providers: config.providers.filter(item => item.id !== id),
+              defaultProviderId: config.defaultProviderId === id ? null : config.defaultProviderId,
+              bindings: Object.fromEntries(Object.entries(config.bindings || {}).filter(([, providerId]) => providerId !== id))
+            };
+            setConfig(nextConfig);
+            state.config = nextConfig;
+            if (state.selectedProviderId === id) {
+              state.selectedProviderId = resolveSelectedProvider(nextConfig.providers, state.sessionId, nextConfig.defaultProviderId);
+              if (state.selectedProviderId) sessionStorage.setItem(selectionKey(state.sessionId), state.selectedProviderId);
+              else sessionStorage.removeItem(selectionKey(state.sessionId));
+            }
+            setMessage("供应商已删除");
+          } catch (error) {
+            setMessage(error.message);
+            setMessageKind("error");
+          }
+        };
+
+        const field = (key, label, type = "text", wide = false) =>
+          h(
+            "div",
+            { className: `db-field${wide ? " wide" : ""}` },
+            h("label", { htmlFor: `db-${key}` }, label),
+            h("input", {
+              id: `db-${key}`,
+              type: key === "endpoint" && form.endpointBase ? "text" : type,
+              required: key !== "apiKey",
+              min: key === "timeoutSeconds" ? 1 : key === "queryIntervalMinutes" ? 0 : undefined,
+              max: key === "timeoutSeconds" ? 300 : key === "queryIntervalMinutes" ? 1440 : undefined,
+              step: type === "number" ? 1 : undefined,
+              value: form[key],
+              onChange: event => setForm({ ...form, [key]: event.target.value })
+            })
+          );
+
+        const toHeadersText = (provider) =>
+          Object.entries(provider.headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n");
+
+        const headerRows = () =>
+          form.headersText
+            ? form.headersText.split(/\r?\n/).map(line => {
+                const at = line.indexOf(":");
+                return at < 0
+                  ? { name: line, value: "" }
+                  : { name: line.slice(0, at).trim(), value: line.slice(at + 1).trim() };
+              })
+            : [];
+
+        const updateHeaderRows = (rows) =>
+          setForm({ ...form, headersText: rows.map(row => `${row.name}: ${row.value}`).join("\n") });
+
+        const headersEditor = () => {
+          const rows = headerRows();
+          return h(
+            "div",
+            { className: "db-field wide" },
+            h("label", null, "请求头（Authorization 自动注入，无需填写）"),
+            h(
+              "div",
+              { className: "db-header-list" },
+              rows.map((row, index) =>
+                h(
+                  "div",
+                  { className: "db-header-row", key: index },
+                  h("input", {
+                    type: "text",
+                    placeholder: "名称",
+                    value: row.name,
+                    onChange: event => {
+                      const next = [...rows];
+                      next[index] = { ...row, name: event.target.value };
+                      updateHeaderRows(next);
+                    }
+                  }),
+                  h("input", {
+                    type: "text",
+                    placeholder: "值",
+                    value: row.value,
+                    onChange: event => {
+                      const next = [...rows];
+                      next[index] = { ...row, value: event.target.value };
+                      updateHeaderRows(next);
+                    }
+                  }),
+                  h(
+                    "button",
+                    {
+                      className: "db-header-remove",
+                      type: "button",
+                      title: "删除请求头",
+                      "aria-label": "删除请求头",
+                      onClick: () => updateHeaderRows(rows.filter((_, rowIndex) => rowIndex !== index))
+                    },
+                    h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))
+                  )
+                )
+              )
+            ),
+            h(
+              "button",
+              { className: "db-header-add", type: "button", onClick: () => updateHeaderRows([...rows, { name: "", value: "" }]) },
+              "+ 添加请求头"
+            )
+          );
+        };
+
+        const inlineEditor = () =>
+          h(
+            "div",
+            { className: "db-inline-editor" },
+            h(
+              "form",
+              { className: "db-form", onSubmit: saveProvider },
+              h(
+                "label",
+                { className: "db-monitor-toggle" },
+                h("span", { className: "db-monitor-toggle-copy" },
+                  h("strong", null, "开启余额监测"),
+                  h("span", null, "关闭后不再自动请求余额，状态栏仅保留供应商名称和独立健康入口。")
+                ),
+                h("input", {
+                  type: "checkbox",
+                  checked: form.balanceEnabled !== false,
+                  onChange: event => setForm({ ...form, balanceEnabled: event.target.checked })
+                })
+              ),
+              field("name", "显示名称"),
+              form.preset === "deepseek"
+                ? h("p", { className: "db-message db-field wide" }, "已使用 DeepSeek 官方余额接口，无需填写查询地址或字段路径。")
+                : form.preset === "opencode-go"
+                  ? h("p", { className: "db-message db-field wide" }, "已使用 OpenCode Go 官方额度接口，自动查询 5 小时、每周和每月用量。")
+                  : [
+                      field("endpoint", form.endpointBase ? "余额查询地址（以 / 开头时将拼接基础地址）" : "余额查询 HTTPS 地址", "url", true),
+                      form.endpointBase &&
+                        h("p", { className: "db-message db-field wide" }, "已复用模型页基础地址：", form.endpointBase, "，仅需在下方追加路径（如 /usage）；或保留为完整地址。"),
+                      h(
+                        "div",
+                        { className: "db-field" },
+                        h("label", { htmlFor: "db-method" }, "请求方式"),
+                        h(
+                          "select",
+                          { id: "db-method", className: "db-select", value: form.method, onChange: event => setForm({ ...form, method: event.target.value }) },
+                          h("option", { value: "GET" }, "GET"),
+                          h("option", { value: "POST" }, "POST（无请求体）")
+                        )
+                      ),
+                      field("responsePath", "余额 JSON 路径"),
+                      h("p", { className: "db-field-help" }, "支持 ?? 回退链与可选链，如 $.remaining ?? $.quota?.remaining ?? $.balance；根节点也可写作 response"),
+                      field("currency", "币种"),
+                      h("p", { className: "db-field-help" }, "可填固定币种（如 USD），或用表达式读取响应单位，如 $.unit ?? \"USD\""),
+                      h(
+                        "div",
+                        { className: "db-field wide" },
+                        h(
+                          "div",
+                          { style: { display: "flex", alignItems: "center", gap: 10 } },
+                          h("label", null, "金额换算"),
+                          h(
+                            "button",
+                            {
+                              className: `db-toggle${form.conversionEnabled ? " on" : ""}`,
+                              type: "button",
+                              "aria-pressed": form.conversionEnabled,
+                              onClick: () => setForm({ ...form, conversionEnabled: !form.conversionEnabled })
+                            },
+                            h("i")
+                          )
+                        ),
+                        h("p", { className: "db-field-help" }, "接口返回的是额度单位而非实际金额时开启。")
+                      ),
+                      form.conversionEnabled &&
+                        h("div", { className: "db-field wide" }, field("valueDivisor", "换算除数", "number", true), h("p", { className: "db-field-help" }, "接口原始值 ÷ 换算除数 = 最终显示金额")),
+                      headersEditor()
+                    ],
+              !form.credentialRef && field("apiKey", "API Key（仅写入钥匙串）", "password", true),
+              form.credentialRef &&
+                h("p", { className: "db-message db-field wide" }, "将复用模型页凭据：", form.credentialRef, "，无需再次输入 API Key。"),
+              h(
+                "div",
+                { className: "db-field wide" },
+                h("label", { htmlFor: "db-queryIntervalMinutes" }, "刷新间隔（分钟，0 为不自动刷新）"),
+                h("input", {
+                  id: "db-queryIntervalMinutes",
+                  type: "number",
+                  min: 0,
+                  max: 1440,
+                  value: form.queryIntervalMinutes,
+                  onChange: event => setForm({ ...form, queryIntervalMinutes: Number(event.target.value) })
+                })
+              ),
+              h(
+                "div",
+                { className: "db-field wide" },
+                h("label", { htmlFor: "db-timeoutSeconds" }, "请求超时（秒）"),
+                h("input", {
+                  id: "db-timeoutSeconds",
+                  type: "number",
+                  min: 1,
+                  max: 300,
+                  value: form.timeoutSeconds,
+                  onChange: event => setForm({ ...form, timeoutSeconds: Number(event.target.value) })
+                })
+              ),
+              testResult &&
+                h(
+                  "div",
+                  { className: "db-field wide" },
+                  h("p", { className: testResult.status === "ok" ? "db-message" : "db-message error" }, testResult.status === "ok" ? `测试成功: 可用额度 ${testResult.available ?? "无数值"} ${testResult.currency || ""}` : `测试失败: ${testResult.error || "未知错误"}`)
+                ),
+              h(
+                "div",
+                { className: "db-form-actions" },
+                h("button", { className: "db-quiet", type: "button", onClick: () => { setForm(blankForm); setEditing(null); } }, "取消"),
+                h("button", { className: "db-quiet", type: "button", onClick: testProvider, disabled: testing }, testing ? "测试中…" : "测试"),
+                h("button", { className: "db-primary", type: "submit" }, "保存")
+              )
+            )
+          );
+
+        const externalPayload = () => {
+          let generatedName = externalForm.name;
+          try { generatedName = generatedName || new URL(externalForm.endpoint).hostname; } catch {}
+          return {
+            id: externalForm.id || `source-${Date.now().toString(36)}`,
+            name: generatedName || "外部监测源",
+            providerId: advancedProvider?.id || externalForm.providerId || "",
+            enabled: externalForm.enabled === true,
+            endpoint: externalForm.endpoint,
+            requestType: externalForm.requestType || "custom",
+            method: externalForm.requestMethod || "GET",
+            intervalSeconds: Number(externalForm.intervalSeconds) || 60,
+            timeoutSeconds: Number(externalForm.timeoutSeconds) || 10,
+            modelListPath: externalForm.modelListPath,
+            fields: Object.fromEntries(
+              Object.entries({
+                model: externalForm.model,
+                status: externalForm.status,
+                availability: externalForm.availability,
+                ttft: externalForm.ttft,
+                response: externalForm.response,
+                history: externalForm.history,
+                historyAt: externalForm.historyAt,
+                historyStatus: externalForm.historyStatus,
+                historyError: externalForm.historyError,
+                error: externalForm.error
+              }).map(([key, value]) => [key, externalFieldEnabled[key] ? value : ""])
+            ),
+            enabledFields: externalFieldEnabled,
+            customFields: externalCustomFields
+              .filter(field => field.name && field.path)
+              .map(field => ({
+                name: field.name,
+                path: field.path,
+                transform: ["identity", "number", "percent", "status"].includes(field.transform) ? field.transform : "identity"
+              })),
+            transforms: {
+              model: externalForm.modelTransform,
+              status: externalForm.statusTransform,
+              availability: externalForm.availabilityTransform,
+              ttft: externalForm.ttftTransform,
+              response: externalForm.responseTransform,
+              history: externalForm.historyTransform,
+              historyAt: externalForm.historyAtTransform,
+              historyStatus: externalForm.historyStatusTransform,
+              historyError: externalForm.historyErrorTransform,
+              error: externalForm.errorTransform
+            },
+            ttftUnit: externalForm.ttftUnit,
+            responseUnit: externalForm.responseUnit
+          };
+        };
+
+        const externalField = (key, label, type = "text") =>
+          h(
+            "div",
+            { className: "db-field" },
+            h("label", { htmlFor: `db-external-${key}` }, label),
+            h("input", {
+              id: `db-external-${key}`,
+              type,
+              value: externalForm[key],
+              required: key === "endpoint",
+              min: key === "intervalSeconds" ? 5 : key === "timeoutSeconds" ? 1 : undefined,
+              max: key === "intervalSeconds" ? 86400 : key === "timeoutSeconds" ? 300 : undefined,
+              step: type === "number" ? 1 : undefined,
+              onChange: event => setExternalForm({ ...externalForm, [key]: event.target.value })
+            })
+          );
+
         const previewReady = Boolean(externalPreview?.preview || externalForm.preview);
-         const mappingOptions = () => (externalPreview?.keys || externalForm.previewKeys || []).filter(item => item.path.startsWith(`${externalForm.modelListPath}[]`)).map(item => ({ ...item, path: `$${item.path.slice(`${externalForm.modelListPath}[]`.length)}` }));
-        const transformOptions = (key) => h("select", { className: "db-select db-map-transform", value: externalForm[`${key}Transform`] || "identity", onChange: event => updateExternalForm({ ...externalForm, [`${key}Transform`]: event.target.value }, true) }, h("option", { value: "identity" }, "直接展示"), h("option", { value: "number" }, "转数字"), h("option", { value: "percent" }, "百分比"), h("option", { value: "status" }, "状态转换"));
-         const mappingField = (key, label) => h("div", { className: `db-map-row${externalFieldEnabled[key] ? "" : " disabled"}` }, h("span", { className: "db-map-label" }, label), h("select", { className: "db-select", value: externalForm[key] || "", disabled: !previewReady, onChange: event => updateExternalForm({ ...externalForm, [key]: event.target.value }, true) }, h("option", { value: "" }, ""), ...mappingOptions().map(item => h("option", { key: `${key}-${item.path}`, value: item.path }, `${item.path} · ${item.type}`))), transformOptions(key), h("button", { className: "db-delete db-icon-button", type: "button", "aria-label": `清除${label}映射`, title: `清除${label}映射`, onClick: () => { setExternalFieldEnabled({ ...externalFieldEnabled, [key]: false }); setExternalForm({ ...externalForm, [key]: "" }); } }, h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))));
-        const listField = h("div", { className: "db-field" }, h("label", { htmlFor: "db-external-modelListPath" }, "模型列表路径"), h("select", { id: "db-external-modelListPath", className: "db-select", value: externalForm.modelListPath, disabled: !previewReady, onChange: event => updateExternalForm({ ...externalForm, modelListPath: event.target.value }, true) }, h("option", { value: "" }, ""), externalForm.modelListPath && h("option", { value: externalForm.modelListPath }, externalForm.modelListPath), ...(externalPreview?.keys || externalForm.previewKeys || []).filter(item => item.type === "array").map(item => h("option", { key: item.path, value: item.path }, `${item.path} · 数组`))));
-       const beginExternalAdd = () => { setExternalForm({ ...blankExternalForm, id: `source-${Date.now().toString(36)}`, providerId: advancedProvider?.id || "" }); setExternalCustomFields([]); setExternalFieldEnabled({ model: true, status: true, availability: true, ttft: true, response: true, history: true, historyAt: true, historyStatus: true, error: true }); setExternalEditing("__new"); setExternalPreview(null); setExternalTestState("idle"); setExternalTestMessage(""); setAdvancedTab("health"); };
-        const previewExternal = async event => { event?.preventDefault?.(); if (!externalForm.endpoint.trim()) { setExternalTestState("error"); setExternalTestMessage("请先填写请求地址"); return; } if (!/^https:\/\//i.test(externalForm.endpoint.trim())) { setExternalTestState("error"); setExternalTestMessage("请求地址必须使用 HTTPS"); return; } setExternalPreviewing(true); setExternalTestState("loading"); setExternalTestMessage("正在请求并解析 JSON…"); setExternalPreview(null); setExternalResultError(""); try { const data = await api("/external-status-preview", { method: "POST", body: JSON.stringify({ ...externalPayload(), method: "GET", modelListPath: externalForm.modelListPath || "$.models", id: externalForm.id || "preview-source" }) }); setExternalPreview(data); setExternalPreviewStatus(data.normalized || null); setExternalForm(current => ({ ...current, preview: data.preview, previewKeys: data.keys })); setExternalTestState("success"); setExternalTestMessage("请求成功，已解析 JSON"); setExternalResultOpen(true); } catch (error) { setExternalTestState("error"); setExternalTestMessage(error.message || "请求失败"); setExternalResultError(error.message || "请求失败"); setExternalResultOpen(true); } finally { setExternalPreviewing(false); } };
-       const beginExternalEdit = source => { const saved = (config?.externalStatusSources || []).find(item => item.id === source.id) || source; const fields = saved.fields || {}; setExternalForm({ ...blankExternalForm, ...saved, requestMethod: saved.method || "GET", model: fields.model || "", status: fields.status || "", availability: fields.availability || "", ttft: fields.ttft || "", response: fields.response || "", history: fields.history || "", historyAt: fields.historyAt || "", historyStatus: fields.historyStatus || "", error: fields.error || "", modelTransform: saved.transforms?.model || "identity", statusTransform: saved.transforms?.status || "status", availabilityTransform: saved.transforms?.availability || "percent", ttftTransform: saved.transforms?.ttft || "number", responseTransform: saved.transforms?.response || "number", historyTransform: saved.transforms?.history || "identity", historyAtTransform: saved.transforms?.historyAt || "number", historyStatusTransform: saved.transforms?.historyStatus || "status", errorTransform: saved.transforms?.error || "identity", preview: saved.preview, previewKeys: saved.previewKeys }); setExternalPreview(saved.preview && saved.previewKeys ? { preview: saved.preview, keys: saved.previewKeys } : null); setExternalCustomFields((saved.customFields || []).map(field => ({ ...field }))); setExternalFieldEnabled({ model: true, status: true, availability: true, ttft: true, response: true, history: true, historyAt: true, historyStatus: true, error: true, ...(saved.enabledFields || {}) }); setExternalEditing(source.id); };
-       const saveExternal = async event => { event.preventDefault(); try { const data = await api("/external-status-source", { method: "POST", body: JSON.stringify(externalPayload()) }); setConfig({ ...config, externalStatusSources: [...(config.externalStatusSources || []).filter(item => item.id !== data.source.id), data.source] }); setExternalEditing(null); setAdvancedOpen(false); setExternalTestState("success"); setExternalTestMessage("配置已保存"); setMessage("监测源已保存"); await loadExternalStatuses(true); } catch (error) { setMessage(error.message); setMessageKind("error"); } };
-       const removeExternal = async id => { try { await api(`/external-status-source/${encodeURIComponent(id)}`, { method: "DELETE" }); setConfig({ ...config, externalStatusSources: (config.externalStatusSources || []).filter(item => item.id !== id) }); await loadExternalStatuses(true); setMessage("外部状态源已删除"); } catch (error) { setMessage(error.message); setMessageKind("error"); } };
-       const previewStatusCards = (status) => { if (!status?.models?.length) return null; const tone = model => model.status === "ok" ? "ok" : model.status === "error" ? "error" : "warn"; return h("div", { className: "db-preview-status" }, h("div", { className: "db-preview-status-head" }, h("strong", null, "模型状态预览"), h("span", null, `${status.models.length} 个模型 · ${status.status === "ok" ? "整体正常" : status.status === "error" ? "存在失败" : "部分异常"}`)), h("div", { className: "db-preview-cards" }, ...status.models.slice(0, 50).map(model => h("div", { className: `db-preview-card ${tone(model)}`, key: model.model, title: model.errors?.length ? model.errors.join(" / ") : `${model.model} 最近一次检测结果` }, h("div", { className: "db-preview-card-head" }, h("span", { className: "db-preview-dot" }), h("strong", { title: model.model }, model.model), h("span", { className: "db-preview-state" }, model.status === "ok" ? "正常" : model.status === "error" ? "失败" : "未知")), h("div", { className: "db-preview-metrics" }, model.availability !== undefined && h("span", null, "可用率 ", h("b", null, `${Number(model.availability).toFixed(2)}%`)), model.responseMs !== undefined && h("span", null, "响应 ", h("b", null, `${model.responseMs}ms`)), model.ttftMs !== undefined && h("span", null, "TTFT ", h("b", null, `${model.ttftMs}ms`))), h("div", { className: "db-preview-history", title: "最近健康记录" }, ...(model.history?.length ? model.history.slice(-60) : [{ status: model.status }]).map((record, index) => h("i", { key: `${model.model}-${index}`, className: record.status === "ok" ? "ok" : record.status === "error" ? "error" : "warn" }))))))); };
-         const jsonTree = (value, key = "根节点", depth = 0) => { if (value === null || typeof value !== "object") { const type = value === null ? "null" : typeof value; const className = type === "string" ? "db-json-string" : type === "number" ? "db-json-number" : type === "boolean" ? "db-json-boolean" : "db-json-null"; return h("div", { className: "db-json-leaf" }, h("span", { className: "db-json-key" }, key), h("span", null, ":"), h("span", { className }, JSON.stringify(value))); } const entries = Object.entries(value); const label = Array.isArray(value) ? `数组 · ${entries.length} 项` : `对象 · ${entries.length} 个字段`; return h("details", { className: "db-json-node", open: depth < 2 }, h("summary", null, h("span", { className: "db-json-key" }, key), h("span", null, ":"), h("span", { className: "db-json-type" }, label)), h("div", { className: "db-json-children" }, ...entries.slice(0, 200).map(([childKey, child], index) => jsonTree(child, Array.isArray(value) ? `[${index}]` : childKey, depth + 1)))); };
-        const customFieldRow = (field, index) => h("div", { className: "db-map-row db-map-custom", key: `custom-${index}` }, h("input", { className: "db-map-label-input", value: field.name, placeholder: "展示字段", onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item)) }), h("select", { className: "db-select", value: field.path || "", onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, path: event.target.value } : item)) }, h("option", { value: "" }, "选择 JSON 字段"), ...mappingOptions().map(item => h("option", { key: `${index}-${item.path}`, value: item.path }, `${item.path} · ${item.type}`))), h("select", { className: "db-map-transform", value: field.transform || "identity", onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, transform: event.target.value } : item)) }, h("option", { value: "identity" }, "直接展示"), h("option", { value: "number" }, "转数字"), h("option", { value: "percent" }, "百分比"), h("option", { value: "status" }, "状态转换")), h("button", { className: "db-delete db-icon-button", type: "button", title: "删除字段", "aria-label": "删除字段", onClick: () => setExternalCustomFields(externalCustomFields.filter((_, itemIndex) => itemIndex !== index)) }, h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))));
-        const externalEditor = () => h("div", { className: "db-external-form" }, h("form", { className: "db-form", onSubmit: saveExternal }, h("div", { className: "db-field" }, h("label", null, "请求方式"), h("select", { className: "db-select", value: externalForm.requestType, onChange: event => setExternalForm({ ...externalForm, requestType: event.target.value }) }, h("option", { value: "custom" }, "自定义请求"))), h("div", { className: "db-field" }, h("label", null, "请求方法"), h("select", { className: "db-select", value: externalForm.requestMethod || "GET", onChange: event => setExternalForm({ ...externalForm, requestMethod: event.target.value }) }, h("option", { value: "GET" }, "GET"))), h("div", { className: "db-field db-endpoint-field" }, h("label", { htmlFor: "db-external-endpoint" }, "请求地址"), h("div", { className: "db-endpoint-row" }, h("input", { id: "db-external-endpoint", type: "url", value: externalForm.endpoint, required: true, onChange: event => setExternalForm({ ...externalForm, endpoint: event.target.value }) }), h("button", { className: "db-quiet", type: "button", onClick: previewExternal, disabled: externalPreviewing }, externalPreviewing ? "测试中" : "测试"))), h("p", { className: `db-test-message${externalTestState === "error" ? " error" : externalTestState === "success" ? " success" : ""}`, role: "status" }, externalTestMessage || "点击测试查看模型状态"), externalField("intervalSeconds", "刷新间隔（秒）", "number"), externalField("timeoutSeconds", "超时时间（秒）", "number"), listField, h("div", { className: "db-map-header" }, h("span", null, "字段映射"), h("span", null, "JSON 字段"), h("span", null, "处理方式")), mappingField("model", "模型名称"), mappingField("status", "健康状态"), mappingField("availability", "可用率"), mappingField("ttft", "TTFT（首 Token 延迟）"), mappingField("response", "响应耗时"), mappingField("history", "历史记录"), mappingField("historyAt", "历史时间"), mappingField("historyStatus", "历史状态"), mappingField("error", "错误信息"), ...externalCustomFields.map(customFieldRow), h("button", { className: "db-header-add", type: "button", onClick: () => setExternalCustomFields([...externalCustomFields, { name: "", path: "", transform: "identity" }]) }, "+ 添加字段"), h("div", { className: "db-field" }, h("label", null, "TTFT 单位"), h("select", { className: "db-select", value: externalForm.ttftUnit, onChange: event => setExternalForm({ ...externalForm, ttftUnit: event.target.value }) }, h("option", { value: "ms" }, "毫秒"), h("option", { value: "s" }, "秒"))), h("div", { className: "db-field" }, h("label", null, "响应耗时单位"), h("select", { className: "db-select", value: externalForm.responseUnit, onChange: event => setExternalForm({ ...externalForm, responseUnit: event.target.value }) }, h("option", { value: "ms" }, "毫秒"), h("option", { value: "s" }, "秒"))), h("div", { className: "db-form-actions" }, h("button", { className: "db-quiet", type: "button", onClick: () => previewExternal() }, externalPreviewing ? "测试中" : "测试"), h("button", { className: "db-quiet", type: "button", onClick: () => { setExternalEditing(null); setExternalPreview(null); } }, "取消"), h("button", { className: "db-primary", type: "submit" }, "确定"))));
-       const openAdvanced = (sourceId = null, provider = null) => { setAdvancedProvider(provider); const savedSources = config?.externalStatusSources || []; const sourceScore = item => Number(Boolean(item.modelListPath)) + Object.values(item.fields || {}).filter(Boolean).length + (Array.isArray(item.customFields) ? item.customFields.length : 0); const providerSources = provider ? savedSources.filter(item => item.providerId === provider.id) : []; const sourceForProvider = providerSources.sort((a, b) => sourceScore(b) - sourceScore(a))[0]; const source = sourceForProvider || (sourceId && sourceId !== "__new" && savedSources.find(item => item.id === sourceId)); if (source) beginExternalEdit(source); else { setExternalForm({ ...blankExternalForm, id: `source-${Date.now().toString(36)}`, providerId: provider?.id || "" }); setExternalCustomFields([]); setExternalFieldEnabled({ model: true, status: true, availability: true, ttft: true, response: true, history: true, historyAt: true, historyStatus: true, error: true }); setExternalEditing("__new"); setExternalPreview(null); } setAdvancedTab("health"); setExternalTestState("idle"); setExternalTestMessage(""); setAdvancedOpen(true); };
-       const healthForProvider = provider => externalStatuses.filter(source => !advancedProvider || source.models?.some(model => model.model === provider?.id || model.model.startsWith(`${provider?.id}/`)));
-       const advancedModal = advancedOpen && h("div", { className: "db-modal-backdrop", role: "presentation", onClick: event => { if (event.target === event.currentTarget) setAdvancedOpen(false); } }, h("div", { className: "db-modal", role: "dialog", "aria-modal": "true", "aria-label": "高级设置" }, h("div", { className: "db-modal-head" }, h("strong", null, `高级设置${advancedProvider?.name ? ` · ${advancedProvider.name}` : ""}`), h("button", { className: "db-modal-close", type: "button", onClick: () => setAdvancedOpen(false), "aria-label": "关闭高级设置", title: "关闭" }, h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M6 6l12 12M18 6L6 18" })))), h("div", { className: "db-modal-tabs" }, h("button", { className: "active", type: "button" }, "健康监测")), h("div", { className: "db-modal-content" }, externalEditing && externalEditor())));
-        const externalResultModal = externalResultOpen && h("div", { className: "db-modal-backdrop", role: "presentation", onClick: event => { if (event.target === event.currentTarget) setExternalResultOpen(false); } }, h("div", { className: "db-modal db-result-modal", role: "dialog", "aria-modal": "true", "aria-label": "测试结果" }, h("div", { className: "db-modal-head" }, h("strong", null, `测试结果${advancedProvider?.name ? ` · ${advancedProvider.name}` : ""}`), h("button", { className: "db-modal-close", type: "button", onClick: () => setExternalResultOpen(false), "aria-label": "关闭测试结果", title: "关闭" }, h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M6 6l12 12M18 6L6 18" })))), h("div", { className: "db-modal-content" }, externalResultError ? h("div", { className: "db-result-error" }, externalResultError) : previewStatusCards(externalPreviewStatus))));
-       function externalCard(source) { return h("div", { className: "db-external-source", key: source.id }, h("div", { className: "db-external-source-top" }, h("i", { className: `db-live${source.status === "error" ? " error" : ""}` }), h("span", { className: "db-external-source-name" }, source.name), h("span", { className: "db-tag" }, "外部监控"), h("div", { className: "db-spacer" }), h("button", { className: "db-quiet", type: "button", onClick: () => loadExternalStatuses(true) }, externalLoading ? "刷新中" : "刷新"), h("button", { className: "db-quiet", type: "button", onClick: () => beginExternalEdit(source) }, "编辑"), h("button", { className: "db-delete", type: "button", onClick: () => removeExternal(source.id) }, "删除")), h("div", { className: "db-external-endpoint", title: source.endpoint }, source.endpoint), h("div", { className: "db-external-overall" }, h("span", null, `状态：${source.status || "未知"}`), h("span", null, `${(source.models || []).length} 个模型`), h("span", null, source.fetchedAt ? formatSyncedAt(source.fetchedAt) : "尚未刷新")), source.error && h("div", { className: "db-external-error" }, source.error), h("div", { className: "db-external-models" }, ...(source.models || []).map(model => h("div", { className: "db-external-model" }, h("div", { className: "db-external-model-top" }, h("i", { className: `db-live${model.status === "error" ? " error" : ""}` }), h("span", { className: "db-external-model-name", title: model.model }, model.model)), h("div", { className: "db-external-metrics" }, model.availability !== undefined && `${model.availability.toFixed(2)}% 可用`, model.ttftMs !== undefined && ` · TTFT ${model.ttftMs}ms`, model.responseMs !== undefined && ` · 响应 ${model.responseMs}ms`, model.samples ? ` · ${model.samples} 条记录` : ""), model.errors?.length ? h("div", { className: "db-external-error" }, model.errors.join(" / ")) : null))), externalEditing === source.id && externalEditor()); }
-       const providerByModel = new Map();
-      for (const provider of config.providers) {
-        const route = boundRoute(provider.id);
-        if (route && !providerByModel.has(route)) providerByModel.set(route, provider);
-        else if (!route && modelProviders.some(model => model.id === provider.id) && !providerByModel.has(provider.id)) providerByModel.set(provider.id, provider);
-      }
-      const mergedProviderIds = new Set([...providerByModel.values()].map(provider => provider.id));
-      const providerCard = (provider, modelProvider) => { const editingKey = modelProvider?.id || boundRoute(provider.id) || provider.id; const meta = balanceMeta(provider.id); return h("div", { className: "db-provider-row db-provider-card", key: modelProvider ? `model-${modelProvider.id}` : provider.id }, h("div", { className: "db-row-line" }, h("span", { className: "db-provider-name" }, modelProvider?.name || provider.name), h("span", { className: statuses[provider.id] && statuses[provider.id].status !== "ok" ? "db-live error" : "db-live" }), h("span", { className: "db-tag" }, "已开启查询"), OFFICIAL_PRESETS.has(provider.preset) && h("span", { className: "db-tag" }, "官方内置"), !modelProvider && modelProviders.length > 0 && h("select", { className: "db-bind", value: boundRoute(provider.id), onChange: event => bindRoute(provider.id, event.target.value), title: "绑定到此模型供应商后，状态栏随所选模型显示该余额" }, h("option", { value: "" }, "未绑定模型"), modelProviders.map(mp => h("option", { key: mp.id, value: mp.id }, mp.name))), h("div", { className: "db-spacer" }), h("button", { className: "db-quiet", type: "button", onClick: () => openAdvanced("__new", provider), title: "打开高级设置" }, "高级设置"), h("button", { className: "db-quiet", type: "button", onClick: () => beginEdit(provider) }, "编辑"), h("button", { className: "db-delete", type: "button", onClick: () => remove(provider.id) }, "删除")), h("div", { className: "db-row-meta" }, ...(Array.isArray(meta) ? meta : meta ? [meta] : [])), editing === editingKey && inlineEditor()); };
-      const mergedRows = modelProviders.map(modelProvider => {
-        const provider = providerByModel.get(modelProvider.id);
-        if (provider) return providerCard(provider, modelProvider);
-        const deepseek = /deepseek/i.test(`${modelProvider.id} ${modelProvider.name}`); const opencodeGo = /opencode[-_ ]?go/i.test(`${modelProvider.id} ${modelProvider.name}`); const neco = /^neco$/i.test(modelProvider.id) || /^neco$/i.test(modelProvider.name); const officialPreset = deepseek || opencodeGo;
-        return h("div", { className: "db-provider-row db-provider-card", key: `model-${modelProvider.id}` }, h("div", { className: "db-row-line" }, h("span", { className: "db-provider-name" }, modelProvider.name), h("span", { className: "db-live" }), h("span", { className: "db-tag" }, "未开启查询"), officialPreset && h("span", { className: "db-tag" }, "官方内置"), h("div", { className: "db-spacer" }), h("button", { className: "db-quiet", type: "button", onClick: () => officialPreset ? beginPreset(modelProvider, opencodeGo ? "opencode-go" : "deepseek") : neco ? beginNeco(modelProvider) : beginAdd(modelProvider) }, officialPreset ? "使用官方方案" : "接入余额查询")), editing === modelProvider.id && inlineEditor());
-      });
-      const customRows = config.providers.filter(provider => !mergedProviderIds.has(provider.id)).map(provider => providerCard(provider));
-      return h("section", { className: "db-settings" }, h("header", { className: "db-simple-head" }, h("h2", null, "供应商"), h("p", null, "优先复用“模型”页已配置的供应商和凭据。余额、额度与健康监测等扩展功能可在每个供应商右侧的“高级设置”中查看和配置。")), h("div", { className: "db-provider-list" }, ...mergedRows, ...customRows), advancedModal, externalResultModal, h("div", { className: "db-bottom-settings" }, h("span", null, "默认供应商"), h("select", { className: "db-select", value: config.defaultProviderId || "", onChange: async event => { const defaultProviderId = event.target.value || null; try { await savePreferences({ defaultProviderId }); setMessage("默认供应商已更新"); } catch (error) { setMessage(error.message); setMessageKind("error"); } } }, h("option", { value: "" }, "自动选择第一个供应商"), config.providers.map(provider => h("option", { key: provider.id, value: provider.id }, provider.name))), h("span", null, "状态栏"), h("button", { className: `db-toggle${config.statusBar ? " on" : ""}`, "aria-pressed": config.statusBar, onClick: async () => { const statusBar = !config.statusBar; try { await savePreferences({ statusBar }); setMessage(""); } catch (error) { setMessage(error.message); setMessageKind("error"); } } }, h("i")), h("div", { className: "db-spacer" }), h("button", { className: "db-quiet", type: "button", onClick: () => { loadSummary(); refreshBar(); } }, "刷新")), message && h("p", { className: messageKind === "error" ? "db-message error" : "db-message", role: "status" }, message));
-    } catch (error) { try { window.__balanceSectionError = (error && error.stack) || String(error); } catch {} return h("div", { className: "db-settings" }, h("p", { className: "db-message error" }, "余额查询分区渲染失败: " + String((error && error.message) || error))); }
-    }
-function BalancePluginCard() {
-      const [open, setOpen] = React.useState(false);
-      return h("li", { className: `db-plugin-card${open ? " open" : ""}` },
-        h("button", { className: "db-plugin-card-head", type: "button", "aria-expanded": open, onClick: () => setOpen(!open) },
-          h("span", { className: "db-plugin-card-copy" },
-            h("span", { className: "db-plugin-card-title" }, "供应商状态"),
-            h("span", { className: "db-plugin-card-desc" }, "查询并展示模型供应商的余额、额度与健康状态。")
+
+        const mappingOptions = () =>
+          (externalPreview?.keys || externalForm.previewKeys || [])
+            .filter(item => item.path.startsWith(`${externalForm.modelListPath}[]`))
+            .map(item => ({ ...item, path: `$${item.path.slice(`${externalForm.modelListPath}[]`.length)}` }));
+
+        const transformOptions = (key) =>
+          h(
+            "select",
+            {
+              className: "db-select db-map-transform",
+              value: externalForm[`${key}Transform`] || "identity",
+              onChange: event => updateExternalForm({ ...externalForm, [`${key}Transform`]: event.target.value }, true)
+            },
+            h("option", { value: "identity" }, "直接展示"),
+            h("option", { value: "number" }, "转数字"),
+            h("option", { value: "percent" }, "百分比"),
+            h("option", { value: "status" }, "状态转换")
+          );
+
+        const mappingField = (key, label) =>
+          h(
+            "div",
+            { className: `db-map-row${externalFieldEnabled[key] ? "" : " disabled"}` },
+            h("span", { className: "db-map-label" }, label),
+            h(
+              "select",
+              {
+                className: "db-select",
+                value: externalForm[key] || "",
+                disabled: !previewReady,
+                onChange: event => updateExternalForm({ ...externalForm, [key]: event.target.value }, true)
+              },
+              h("option", { value: "" }, ""),
+              ...mappingOptions().map(item => h("option", { key: `${key}-${item.path}`, value: item.path }, `${item.path} · ${item.type}`))
+            ),
+            transformOptions(key),
+            h(
+              "button",
+              {
+                className: "db-delete db-icon-button",
+                type: "button",
+                "aria-label": `清除${label}映射`,
+                title: `清除${label}映射`,
+                onClick: () => {
+                  setExternalFieldEnabled({ ...externalFieldEnabled, [key]: false });
+                  setExternalForm({ ...externalForm, [key]: "" });
+                }
+              },
+              h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))
+            )
+          );
+
+        const listField = h(
+          "div",
+          { className: "db-field" },
+          h("label", { htmlFor: "db-external-modelListPath" }, "模型列表路径"),
+          h(
+            "select",
+            {
+              id: "db-external-modelListPath",
+              className: "db-select",
+              value: externalForm.modelListPath,
+              disabled: !previewReady,
+              onChange: event => updateExternalForm({ ...externalForm, modelListPath: event.target.value }, true)
+            },
+            h("option", { value: "" }, ""),
+            externalForm.modelListPath && h("option", { value: externalForm.modelListPath }, externalForm.modelListPath),
+            ...(externalPreview?.keys || externalForm.previewKeys || [])
+              .filter(item => item.type === "array")
+              .map(item => h("option", { key: item.path, value: item.path }, `${item.path} · 数组`))
+          )
+        );
+
+        const previewExternal = async event => {
+          event?.preventDefault?.();
+          if (!externalForm.endpoint.trim()) {
+            setExternalTestState("error");
+            setExternalTestMessage("请先填写请求地址");
+            return;
+          }
+          if (!/^https:\/\//i.test(externalForm.endpoint.trim())) {
+            setExternalTestState("error");
+            setExternalTestMessage("请求地址必须使用 HTTPS");
+            return;
+          }
+          setExternalPreviewing(true);
+          setExternalTestState("loading");
+          setExternalTestMessage("");
+          setExternalPreview(null);
+          setExternalResultError("");
+          try {
+            const data = await api("/external-status-preview", {
+              method: "POST",
+              body: JSON.stringify({
+                ...externalPayload(),
+                method: "GET",
+                modelListPath: externalForm.modelListPath || "$.models",
+                id: externalForm.id || "preview-source"
+              })
+            });
+            setExternalPreview(data);
+            setExternalPreviewStatus(data.normalized || null);
+            if (externalForm.id) externalPreviewCache.current.set(externalForm.id, data);
+            setExternalForm(current => ({ ...current, preview: data.preview, previewKeys: data.keys }));
+            setExternalTestState("success");
+            setExternalShowAllPreview(false);
+            setExternalResultOpen(true);
+          } catch (error) {
+            setExternalTestState("error");
+            setExternalTestMessage(error.message || "请求失败");
+            setExternalResultError(error.message || "请求失败");
+            setExternalResultOpen(true);
+          } finally {
+            setExternalPreviewing(false);
+          }
+        };
+
+        const beginExternalEdit = source => {
+          const loadGeneration = ++externalPreviewLoadGeneration.current;
+          const saved = (config?.externalStatusSources || []).find(item => item.id === source.id) || source;
+          const fields = saved.fields || {};
+          const cachedPreview = externalPreviewCache.current.get(source.id);
+          const savedPreview = saved.preview && saved.previewKeys ? { preview: saved.preview, keys: saved.previewKeys, normalized: null } : null;
+          const restoredPreview = cachedPreview || savedPreview;
+          setExternalForm({
+            ...blankExternalForm,
+            ...saved,
+            requestMethod: saved.method || "GET",
+            model: fields.model || "",
+            status: fields.status || "",
+            availability: fields.availability || "",
+            ttft: fields.ttft || "",
+            response: fields.response || "",
+            history: fields.history || "",
+            historyAt: fields.historyAt || "",
+            historyStatus: fields.historyStatus || "",
+            historyError: fields.historyError || "",
+            error: fields.error || "",
+            modelTransform: saved.transforms?.model || "identity",
+            statusTransform: saved.transforms?.status || "status",
+            availabilityTransform: saved.transforms?.availability || "percent",
+            ttftTransform: saved.transforms?.ttft || "number",
+            responseTransform: saved.transforms?.response || "number",
+            historyTransform: saved.transforms?.history || "identity",
+            historyAtTransform: saved.transforms?.historyAt || "number",
+            historyStatusTransform: saved.transforms?.historyStatus || "status",
+            historyErrorTransform: saved.transforms?.historyError || "identity",
+            errorTransform: saved.transforms?.error || "identity",
+            preview: restoredPreview?.preview,
+            previewKeys: restoredPreview?.keys
+          });
+          setExternalPreview(restoredPreview);
+          setExternalPreviewStatus(restoredPreview?.normalized || null);
+          setExternalCustomFields((saved.customFields || []).map(field => ({ ...field })));
+          setExternalFieldEnabled({
+            model: true,
+            status: true,
+            availability: true,
+            ttft: true,
+            response: true,
+            history: true,
+            historyAt: true,
+            historyStatus: true,
+            historyError: true,
+            error: true,
+            ...(saved.enabledFields || {})
+          });
+          setExternalEditing(source.id);
+          setBindingSlot(null);
+          setExternalShowAllPreview(false);
+          if (!restoredPreview) {
+            api(`/external-status-preview/${encodeURIComponent(source.id)}`)
+              .then(data => {
+                if (externalPreviewLoadGeneration.current !== loadGeneration) return;
+                externalPreviewCache.current.set(source.id, data);
+                setExternalPreview(data);
+                setExternalPreviewStatus(data.normalized || null);
+                setExternalForm(current => current.id === source.id ? { ...current, preview: data.preview, previewKeys: data.keys } : current);
+              })
+              .catch(error => {
+                if (externalPreviewLoadGeneration.current !== loadGeneration || error.status === 404) return;
+                setExternalTestState("error");
+                setExternalTestMessage(error.message || "读取预览缓存失败");
+              });
+          }
+        };
+
+        const saveExternal = async event => {
+          event.preventDefault();
+          try {
+            const data = await api("/external-status-source", { method: "POST", body: JSON.stringify(externalPayload()) });
+            const nextConfig = {
+              ...config,
+              externalStatusSources: [...(config.externalStatusSources || []).filter(item => item.id !== data.source.id), data.source]
+            };
+            setConfig(nextConfig);
+            state.config = nextConfig;
+            renderBar(nextConfig, state.providers);
+            setExternalEditing(null);
+            setAdvancedOpen(false);
+            setExternalTestState("success");
+            setExternalTestMessage(data.warning || "配置已保存");
+            setMessage(data.warning ? `监测源已保存；${data.warning}` : "监测源已保存");
+            setMessageKind(data.warning ? "warn" : "ok");
+            await loadExternalStatuses(true);
+          } catch (error) {
+            const detail = error.message || "保存监测源失败";
+            setExternalTestState("error");
+            setExternalTestMessage(detail);
+            setMessage(detail);
+            setMessageKind("error");
+          }
+        };
+
+        const removeExternal = async id => {
+          try {
+            await api(`/external-status-source/${encodeURIComponent(id)}`, { method: "DELETE" });
+            externalPreviewLoadGeneration.current += 1;
+            externalPreviewCache.current.delete(id);
+            const nextConfig = { ...config, externalStatusSources: (config.externalStatusSources || []).filter(item => item.id !== id) };
+            setConfig(nextConfig);
+            state.config = nextConfig;
+            closeHealthModal();
+            renderBar(nextConfig, state.providers);
+            await loadExternalStatuses(true);
+            setMessage("外部状态源已删除");
+          } catch (error) {
+            setMessage(error.message);
+            setMessageKind("error");
+          }
+        };
+
+        const previewStatusCards = (status) => {
+          if (!status?.models?.length) return null;
+          const tone = model => model.status === "ok" ? "ok" : model.status === "error" ? "error" : "warn";
+          return h(
+            "div",
+            { className: "db-preview-status" },
+            h("div", { className: "db-preview-status-head" }, h("strong", null, "模型状态预览"), h("span", null, `${status.models.length} 个模型 · ${status.status === "ok" ? "整体正常" : status.status === "error" ? "存在失败" : "部分异常"}`)),
+            h(
+              "div",
+              { className: "db-preview-cards" },
+              ...status.models.slice(0, 50).map(model =>
+                h(
+                  "div",
+                  { className: `db-preview-card ${tone(model)}`, key: model.model, title: `${model.model} 最近一次检测结果` },
+                  h("div", { className: "db-preview-card-head" }, h("span", { className: "db-preview-dot" }), h("strong", { title: model.model }, model.model), h("span", { className: "db-preview-state" }, model.status === "ok" ? "正常" : model.status === "error" ? "失败" : "未知")),
+                  h("div", { className: "db-preview-metrics" }, model.availability !== undefined && h("span", null, "可用率 ", h("b", null, `${Number(model.availability).toFixed(2)}%`)), model.responseMs !== undefined && h("span", null, "响应 ", h("b", null, `${model.responseMs}ms`)), model.ttftMs !== undefined && h("span", null, "TTFT ", h("b", null, `${model.ttftMs}ms`)), model.samples > 0 && h("span", null, "样本 ", h("b", null, String(model.samples)))),
+                  h("div", { className: "db-preview-history", title: "最近健康记录" }, ...(model.history?.length ? model.history.slice(-60) : [{ status: model.status }]).map((record, index) => h("i", { key: `${model.model}-${index}`, className: record.status === "ok" ? "ok" : record.status === "error" ? "error" : "warn", title: [formatHistoryAt(record.at), record.error].filter(Boolean).join(" · ") || "健康状态记录" })))
+                )
+              )
+            )
+          );
+        };
+
+        const readPreviewPath = (data, path) => {
+          if (!data || typeof data !== "object" || !path || path === "$") return undefined;
+          const keys = path.slice(1).split(/\.|(?=\[)/).filter(Boolean).map(key => key.replace(/^\[/, "").replace(/\]$/, ""));
+          let current = data;
+          for (const key of keys) {
+            if (current === null || typeof current !== "object") return undefined;
+            if (/^\d+$/.test(key)) {
+              if (!Array.isArray(current)) return undefined;
+              current = current[Number(key)];
+              continue;
+            }
+            if (key === "__proto__" || key === "constructor" || key === "prototype") return undefined;
+            current = current[key];
+          }
+          return current;
+        };
+
+        const listPathFromLeaf = path => {
+          const match = path.match(/^(.*)\[\d+\]/);
+          return match ? match[1] : null;
+        };
+
+        const normalizeHealthLabel = value => {
+          const text = value === true ? "ok" : value === false ? "fail" : String(value ?? "").toLowerCase();
+          if (value === 1 || ["ok", "online", "operational", "healthy", "normal", "good", "available"].includes(text)) return "正常";
+          if (value === 0 || ["fail", "failed", "failing", "error", "down", "offline", "degraded", "bad"].includes(text)) return "失败";
+          if (["warn", "warning", "partial", "idle", "pending"].includes(text)) return "警告";
+          return "未知";
+        };
+
+        const handleNodeClick = (path, type) => {
+          if (!bindingSlot) return;
+          if (bindingSlot === "modelListPath") {
+            const listPath = type === "array" ? path : listPathFromLeaf(path);
+            if (!listPath) {
+              setExternalTestState("idle");
+              setExternalTestMessage("请点击 JSON 中的数组节点作为模型列表");
+              return;
+            }
+            updateExternalForm({ ...externalForm, modelListPath: listPath }, true);
+            setBindingSlot(null);
+            return;
+          }
+          if (externalForm.modelListPath) {
+            const targetPath = bindingSlot === "history" && type !== "array" ? listPathFromLeaf(path) : path;
+            const rest = targetPath?.startsWith(externalForm.modelListPath) ? targetPath.slice(externalForm.modelListPath.length).match(/^\[\d+\](.*)$/) : null;
+            if (!rest) {
+              setExternalTestMessage("该字段不在模型列表内，请先重新绑定模型列表路径");
+              return;
+            }
+            if (bindingSlot === "history") {
+              if (!rest[1] || (type !== "array" && !targetPath)) {
+                setExternalTestMessage("请点击模型项中的历史记录数组");
+                return;
+              }
+              updateExternalForm({ ...externalForm, history: `$${rest[1]}` }, true);
+              setBindingSlot(null);
+              return;
+            }
+            if (bindingSlot === "historyStatus" || bindingSlot === "historyAt" || bindingSlot === "historyError") {
+              if (!externalForm.history) {
+                const inferred = rest[1].match(/^(.*?)\[\d+\](.*)$/);
+                if (!inferred || !inferred[1] || !inferred[2]) {
+                  setExternalTestMessage("请选择历史记录数组中的字段");
+                  return;
+                }
+                updateExternalForm({ ...externalForm, history: `$${inferred[1]}`, [bindingSlot]: `$${inferred[2]}` }, true);
+                setBindingSlot(null);
+                return;
+              }
+              const historyPrefix = externalForm.history.slice(1);
+              const historyRest = rest[1].startsWith(historyPrefix) ? rest[1].slice(historyPrefix.length).match(/^\[\d+\](.*)$/) : null;
+              if (!historyRest || !historyRest[1]) {
+                setExternalTestMessage("请选择已绑定历史数组中的记录字段");
+                return;
+              }
+              updateExternalForm({ ...externalForm, [bindingSlot]: `$${historyRest[1]}` }, true);
+              setBindingSlot(null);
+              return;
+            }
+            updateExternalForm({ ...externalForm, [bindingSlot]: `$${rest[1]}` }, true);
+            setBindingSlot(null);
+            return;
+          }
+          const listPath = listPathFromLeaf(path);
+          const rest = listPath ? path.slice(listPath.length).match(/^\[\d+\](.*)$/) : null;
+          if (!listPath || !rest) {
+            setExternalTestMessage("请先点击「模型列表」槽位并选择 JSON 中的数组节点");
+            return;
+          }
+          updateExternalForm({ ...externalForm, modelListPath: listPath, [bindingSlot]: `$${rest[1]}` }, true);
+          setBindingSlot(null);
+        };
+
+        const jsonTree = (value) => h(JsonTreeNode, {
+          value,
+          path: "$",
+          labelKey: "根节点",
+          depth: 0,
+          bindingSlot,
+          onNodeClick: handleNodeClick
+        });
+
+        const customFieldRow = (field, index) =>
+          h(
+            "div",
+            { className: "db-map-row db-map-custom", key: `custom-${index}` },
+            h("input", {
+              className: "db-map-label-input",
+              value: field.name,
+              placeholder: "展示字段",
+              onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))
+            }),
+            h(
+              "select",
+              {
+                className: "db-select",
+                value: field.path || "",
+                onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, path: event.target.value } : item))
+              },
+              h("option", { value: "" }, "选择 JSON 字段"),
+              ...mappingOptions().map(item => h("option", { key: `${index}-${item.path}`, value: item.path }, `${item.path} · ${item.type}`))
+            ),
+            h(
+              "select",
+              {
+                className: "db-map-transform",
+                value: field.transform || "identity",
+                onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, transform: event.target.value } : item))
+              },
+              h("option", { value: "identity" }, "直接展示"),
+              h("option", { value: "number" }, "转数字"),
+              h("option", { value: "percent" }, "百分比"),
+              h("option", { value: "status" }, "状态转换")
+            ),
+            h(
+              "button",
+              {
+                className: "db-delete db-icon-button",
+                type: "button",
+                title: "删除字段",
+                "aria-label": "删除字段",
+                onClick: () => setExternalCustomFields(externalCustomFields.filter((_, itemIndex) => itemIndex !== index))
+              },
+              h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))
+            )
+          );
+
+        const jsonPreviewContent = () => {
+          if (externalPreviewing) {
+            return h("div", { className: "db-json-preview-loading" }, h("div", { className: "db-spinner" }));
+          }
+          if (externalTestState === "error" && externalResultError) {
+            return h(
+              "div",
+              { className: "db-json-preview-error" },
+              h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.5", "aria-hidden": "true" },
+                h("path", { d: "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" })),
+              externalResultError
+            );
+          }
+          if (externalPreview?.preview) {
+            return jsonTree(externalPreview.preview);
+          }
+          return h(
+            "div",
+            { className: "db-json-preview-empty" },
+            h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.5", "aria-hidden": "true" },
+              h("path", { d: "M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" })),
+            "点击「测试」查看返回 JSON 结构"
+          );
+        };
+
+        const mappingSlotDefs = [
+          { key: "model", label: "模型名称", transformable: true },
+          { key: "status", label: "健康状态", transformable: true },
+          { key: "availability", label: "可用率", transformable: true },
+          { key: "ttft", label: "TTFT", transformable: true },
+          { key: "response", label: "响应耗时", transformable: true },
+          { key: "history", label: "最近记录", array: true },
+          { key: "historyStatus", label: "历史状态" },
+          { key: "historyAt", label: "记录时间" },
+          { key: "historyError", label: "错误原因" }
+        ];
+
+        const applyClientTransform = (raw, transform, key) => {
+          if (raw === undefined || raw === null || raw === "") return "";
+          if (transform === "percent") {
+            const n = Number(raw);
+            return Number.isFinite(n) ? `${(n >= 0 && n <= 1 ? n * 100 : n).toFixed(2)}%` : String(raw);
+          }
+          if (transform === "number") {
+            const n = Number(raw);
+            if (!Number.isFinite(n)) return String(raw);
+            const usesSeconds = (key === "ttft" && externalForm.ttftUnit === "s") || (key === "response" && externalForm.responseUnit === "s");
+            return `${Math.round(usesSeconds ? n * 1000 : n)}ms`;
+          }
+          if (transform === "status") return normalizeHealthLabel(raw);
+          return String(raw);
+        };
+
+        const TRANSFORM_OPTIONS = [["identity", "原文"], ["number", "数字"], ["percent", "百分比"], ["status", "状态"]];
+
+        const mappingPreviewCard = () => {
+          const previewData = externalPreview?.preview;
+          const list = previewData && externalForm.modelListPath ? readPreviewPath(previewData, externalForm.modelListPath) : null;
+          const sample = Array.isArray(list) ? list[0] : undefined;
+          const slotDisplay = key => {
+            if (!externalForm[key]) return { text: "", empty: true };
+            const raw = readPreviewPath(sample, externalForm[key]);
+            const text = applyClientTransform(raw, externalForm[`${key}Transform`] || "identity", key);
+            return { text, empty: !text };
+          };
+          const statusInfo = slotDisplay("status");
+          const tone = statusInfo.text === "正常" ? " ok" : statusInfo.text === "失败" ? " error" : statusInfo.text === "警告" ? " warn" : "";
+          const bindTarget = (key, label, content, extraClass = "", tag = "span") => {
+            const active = bindingSlot === key;
+            const bound = Boolean(externalForm[key]);
+            return h(tag, {
+              className: `db-bind-target${active ? " active" : ""}${bound ? "" : " empty"}${extraClass}`,
+              title: bound ? `${label} ← ${externalForm[key]}` : `点击后选择左侧 JSON 字段绑定${label}`,
+              onClick: () => setBindingSlot(active ? null : key)
+            }, content);
+          };
+          const activeDef = bindingSlot === "modelListPath" ? { key: "modelListPath", label: "模型列表", array: true } : mappingSlotDefs.find(slot => slot.key === bindingSlot);
+          const activeBound = activeDef ? Boolean(externalForm[activeDef.key]) : false;
+          const rawHistory = sample && externalForm.history ? readPreviewPath(sample, externalForm.history) : null;
+          const historyRecords = Array.isArray(rawHistory) ? rawHistory.slice(-60) : [];
+          const historyStatusMatched = Boolean(externalForm.historyStatus) && historyRecords.some(record => readPreviewPath(record, externalForm.historyStatus) !== undefined);
+          const historyStatusInvalid = Boolean(externalForm.historyStatus) && historyRecords.length > 0 && !historyStatusMatched;
+          const historyErrorMatched = Boolean(externalForm.historyError) && historyRecords.some(record => readPreviewPath(record, externalForm.historyError) !== undefined);
+          const historyErrorInvalid = Boolean(externalForm.historyError) && historyRecords.length > 0 && !historyErrorMatched;
+          const history = historyRecords.map(record => {
+            const rawStatus = externalForm.historyStatus ? readPreviewPath(record, externalForm.historyStatus) : undefined;
+            const label = normalizeHealthLabel(rawStatus);
+            return {
+              tone: label === "正常" ? "ok" : label === "失败" ? "error" : label === "警告" ? "warn" : "",
+              at: externalForm.historyAt ? readPreviewPath(record, externalForm.historyAt) : undefined,
+              error: externalForm.historyError ? readPreviewPath(record, externalForm.historyError) : undefined
+            };
+          });
+          const historyBars = history.length ? history : Array.from({ length: 30 }, () => ({ tone: "", at: undefined, error: undefined }));
+          return h(
+            "div",
+            { className: `db-preview-card${tone.trim() ? ` ${tone.trim()}` : ""} db-bind-card` },
+            h("div", { className: "db-bind-list-row" },
+              h("span", null, "模型列表"),
+              bindTarget("modelListPath", "模型列表", externalForm.modelListPath || "点击选择数组", " db-bind-list-target"),
+              externalForm.modelListPath && h("button", { className: "db-bind-action-btn", type: "button", title: "清除模型列表绑定", onClick: () => updateExternalForm({ ...externalForm, modelListPath: "" }, true) }, "清除")
+            ),
+            h("div", { className: "db-bind-dashboard-head" },
+              h("div", { className: "db-bind-model-copy" },
+                bindTarget("model", "模型名称", slotDisplay("model").text || (externalForm.model ? "待预览" : "绑定模型名称"), " db-bind-model", "strong"),
+                h("span", { className: "db-bind-model-meta" }, externalForm.model || "点击模型名称后，在左侧选择字段")
+              ),
+              bindTarget("status", "健康状态", [
+                h("span", { key: "value" }, statusInfo.text || (externalForm.status ? "待预览" : "未绑定")),
+                h("span", { key: "path", className: "db-bind-status-path" }, externalForm.status || "点击绑定")
+              ], ` db-bind-state${tone}`)
+            ),
+            h("div", { className: "db-bind-metric-grid" },
+              bindTarget("ttft", "TTFT", h("span", { className: "db-bind-metric-card" },
+                h("span", { className: "db-bind-metric-label" },
+                  h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.7", "aria-hidden": "true" }, h("path", { d: "M13 2L4 14h7l-1 8 9-12h-7z" })),
+                  h("span", null, "对话延迟"),
+                  h("span", { className: "db-bind-field-path" }, externalForm.ttft || "点击绑定")
+                ),
+                h("span", { className: "db-bind-metric-value" }, slotDisplay("ttft").text || "—")
+              )),
+              bindTarget("response", "响应耗时", h("span", { className: "db-bind-metric-card" },
+                h("span", { className: "db-bind-metric-label" },
+                  h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.7", "aria-hidden": "true" }, h("circle", { cx: "12", cy: "12", r: "9" }), h("path", { d: "M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9S14.5 18.4 12 21M12 3C9.5 5.6 8.2 8.6 8.2 12S9.5 18.4 12 21" })),
+                  h("span", null, "端点响应"),
+                  h("span", { className: "db-bind-field-path" }, externalForm.response || "点击绑定")
+                ),
+                h("span", { className: "db-bind-metric-value" }, slotDisplay("response").text || "—")
+              ))
+            ),
+            bindTarget("availability", "可用率", h("span", { className: "db-bind-availability" },
+              h("span", { className: "db-bind-availability-copy" },
+                h("span", { className: "db-bind-availability-label" }, "可用性 · 当前样本"),
+                h("span", { className: "db-bind-field-path" }, externalForm.availability || "点击绑定")
+              ),
+              h("span", { className: "db-bind-availability-value" }, slotDisplay("availability").text || "—")
+            )),
+            h("div", { className: "db-bind-history-head" },
+              bindTarget("history", "最近记录", h("strong", null, history.length ? `最近 ${history.length} 次记录` : externalForm.history ? "最近记录" : "绑定最近记录")),
+              h("span", null, "字段映射")
+            ),
+            h("div", { className: "db-bind-history-field-row" },
+              h("span", null, "状态"),
+              bindTarget("historyStatus", "历史状态", externalForm.historyStatus || "点击选择字段", historyStatusInvalid ? " invalid" : ""),
+              historyStatusInvalid && h("span", { className: "db-bind-history-invalid" }, "无匹配")
+            ),
+            h("div", { className: "db-bind-history-field-row" },
+              h("span", null, "时间"),
+              bindTarget("historyAt", "记录时间", externalForm.historyAt || "点击选择字段")
+            ),
+            h("div", { className: "db-bind-history-field-row" },
+              h("span", null, "错误"),
+              bindTarget("historyError", "错误原因", externalForm.historyError || "点击选择字段", historyErrorInvalid ? " invalid" : ""),
+              historyErrorInvalid && h("span", { className: "db-bind-history-invalid" }, "无匹配")
+            ),
+            bindTarget("historyStatus", "历史状态", h("span", { className: "db-bind-history-bars" }, ...historyBars.map((record, index) => h("i", {
+              key: index,
+              className: record.tone,
+              title: [record.at !== undefined && `时间：${formatHistoryAt(record.at)}`, record.error && `错误：${record.error}`].filter(Boolean).join("\n") || "历史状态记录"
+            }))), " db-bind-history-target"),
+            h("div", { className: "db-bind-history-axis" }, h("span", null, "PAST"), h("span", null, "NOW")),
+            h("div", { className: "db-bind-card-foot" },
+              activeDef ? [
+                h("span", { key: "hint" }, `正在绑定「${activeDef.label}」— 点击左侧 JSON ${activeDef.array ? "中的数组节点" : "中的字段"}完成绑定`),
+                activeDef.transformable && activeBound && h("div", { key: "actions", className: "db-bind-actions" },
+                  ...TRANSFORM_OPTIONS.map(([value, label]) => h("button", {
+                    key: value,
+                    className: `db-bind-action-btn${(externalForm[`${activeDef.key}Transform`] || "identity") === value ? " on" : ""}`,
+                    type: "button",
+                    onClick: () => updateExternalForm({ ...externalForm, [`${activeDef.key}Transform`]: value }, true)
+                  }, label))
+                ),
+                activeBound && h("button", { key: "clear", className: "db-bind-action-btn", type: "button", onClick: () => updateExternalForm({ ...externalForm, [activeDef.key]: "" }, true) }, "清除绑定")
+              ] : Array.isArray(list)
+                ? "点击卡片上的虚线槽位，再点左侧 JSON 中的字段完成绑定，卡片实时预览。"
+                : "先点击「模型列表」槽位并在左侧选择一个数组节点，卡片即可实时预览。"
+            )
+          );
+        };
+
+        const externalEditor = () =>
+          h(
+            "div",
+            { className: "db-external-form" },
+            h(
+              "div",
+              { className: "db-models-head", style: { marginBottom: 4 } },
+              h("span", null, "配置健康监测端点，系统将定期请求并展示可用率与响应状态。")
+            ),
+            h(
+              "form",
+              { className: "db-form", onSubmit: saveExternal },
+              h(
+                "label",
+                { className: "db-monitor-toggle" },
+                h("span", { className: "db-monitor-toggle-copy" },
+                  h("strong", null, "启用健康监测"),
+                  h("span", null, "开启后在当前供应商状态栏显示健康入口，点击入口时才请求接口。")
+                ),
+                h("input", {
+                  type: "checkbox",
+                  checked: externalForm.enabled === true,
+                  onChange: event => setExternalForm({ ...externalForm, enabled: event.target.checked })
+                })
+              ),
+              h(
+                "div",
+                { className: "db-field" },
+                h("label", null, "请求方式"),
+                h("select", { className: "db-select", value: externalForm.requestType, onChange: event => setExternalForm({ ...externalForm, requestType: event.target.value }) }, h("option", { value: "custom" }, "自定义请求"))
+              ),
+              h(
+                "div",
+                { className: "db-field" },
+                h("label", null, "请求方法"),
+                h("select", { className: "db-select", value: externalForm.requestMethod || "GET", onChange: event => setExternalForm({ ...externalForm, requestMethod: event.target.value }) }, h("option", { value: "GET" }, "GET"))
+              ),
+              h(
+                "div",
+                { className: "db-field db-endpoint-field" },
+                h("label", { htmlFor: "db-external-endpoint" }, "请求地址"),
+                h(
+                  "div",
+                  { className: "db-endpoint-row" },
+                  h("input", { id: "db-external-endpoint", type: "url", placeholder: "https://", value: externalForm.endpoint, required: true, onChange: event => setExternalForm({ ...externalForm, endpoint: event.target.value }) }),
+                  h("button", { className: "db-quiet", type: "button", onClick: previewExternal, disabled: externalPreviewing }, externalPreviewing ? "测试中" : "测试"),
+                  externalPreviewing && h("div", { className: "db-endpoint-loading" })
+                )
+              ),
+              externalTestMessage &&
+                h("p", { className: `db-test-message${externalTestState === "error" ? " error" : externalTestState === "success" ? " success" : ""}`, role: "status" }, externalTestMessage),
+              h(
+                "div",
+                { className: "db-field wide" },
+                h(
+                  "div",
+                  { className: "db-json-preview-head" },
+                  h("div", { className: "db-json-preview-title" }, h("label", null, "返回 JSON 预览")),
+                  h("div", { className: "db-json-preview-title" },
+                    h("label", null, "返回状态预览"),
+                    externalPreviewStatus && h("button", { className: "db-quiet db-preview-all-toggle", type: "button", onClick: () => setExternalShowAllPreview(value => !value) }, externalShowAllPreview ? "收起全部状态" : "预览全部模型")
+                  )
+                ),
+                h(
+                  "div",
+                  { className: "db-json-preview-split" },
+                  h("div", { className: `db-json-preview-box${bindingSlot ? " binding" : ""}` }, jsonPreviewContent()),
+                  mappingPreviewCard()
+                )
+              ),
+              externalShowAllPreview && externalPreviewStatus && previewStatusCards(externalPreviewStatus),
+              externalField("intervalSeconds", "刷新间隔（秒）", "number"),
+              externalField("timeoutSeconds", "请求超时（秒）", "number"),
+              h(
+                "div",
+                { className: "db-form-actions" },
+                h("button", { className: "db-quiet", type: "button", onClick: () => { externalPreviewLoadGeneration.current += 1; setExternalEditing(null); } }, "取消"),
+                h("button", { className: "db-primary", type: "submit" }, "保存监测源")
+              )
+            )
+          );
+
+        const openAdvanced = (sourceId = null, provider = null) => {
+          setAdvancedProvider(provider);
+          const savedSources = config?.externalStatusSources || [];
+          const sourceScore = item => Number(Boolean(item.modelListPath)) + Object.values(item.fields || {}).filter(Boolean).length + (Array.isArray(item.customFields) ? item.customFields.length : 0);
+          const providerSources = provider ? savedSources.filter(item => item.providerId === provider.id) : [];
+          const sourceForProvider = providerSources.sort((a, b) => sourceScore(b) - sourceScore(a))[0];
+          const source = sourceForProvider || (sourceId && sourceId !== "__new" && savedSources.find(item => item.id === sourceId));
+          if (source) beginExternalEdit(source);
+          else {
+            setExternalForm({ ...blankExternalForm, id: `source-${Date.now().toString(36)}`, providerId: provider?.id || "" });
+            setExternalCustomFields([]);
+            setExternalFieldEnabled({ model: true, status: true, availability: true, ttft: true, response: true, history: true, historyAt: true, historyStatus: true, historyError: true, error: true });
+            setBindingSlot(null);
+            setExternalShowAllPreview(false);
+            externalPreviewLoadGeneration.current += 1;
+            setExternalEditing("__new");
+            setExternalPreview(null);
+            setExternalPreviewStatus(null);
+          }
+          setAdvancedTab("models");
+          setExternalTestState("idle");
+          setExternalTestMessage("");
+          setAdvancedOpen(true);
+        };
+
+        const advancedModal =
+          advancedOpen &&
+          h(
+            "div",
+            {
+              className: "db-modal-backdrop",
+              role: "presentation",
+              onClick: event => {
+                if (event.target === event.currentTarget) setAdvancedOpen(false);
+              }
+            },
+            h(
+              "div",
+              { className: "db-modal", role: "dialog", "aria-modal": "true", "aria-label": "高级设置" },
+              h(
+                "div",
+                { className: "db-modal-head" },
+                h("strong", null, `高级设置${advancedProvider?.name ? ` · ${advancedProvider.name}` : ""}`),
+                h(
+                  "button",
+                  { className: "db-modal-close", type: "button", onClick: () => setAdvancedOpen(false), "aria-label": "关闭高级设置", title: "关闭" },
+                  h(
+                    "svg",
+                    { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" },
+                    h("path", { d: "M4 4L12 12M12 4L4 12", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round", strokeLinejoin: "round" })
+                  )
+                )
+              ),
+              h(
+                "div",
+                { className: "db-modal-tabs" },
+                h("button", { className: advancedTab === "models" ? "active" : "", type: "button", onClick: () => setAdvancedTab("models") }, "模型设置"),
+                h("button", { className: advancedTab === "health" ? "active" : "", type: "button", onClick: () => setAdvancedTab("health") }, "健康监测")
+              ),
+              h(
+                "div",
+                { className: "db-modal-content" },
+                advancedTab === "models"
+                  ? h(ModelSettingsTab, { provider: advancedProvider, modelProviders, boundRoute })
+                  : (externalEditing && externalEditor())
+              )
+            )
+          );
+
+        // Map configured providers to their model provider entry if applicable
+        const configuredProviders = config.providers || [];
+        const configuredIds = new Set(configuredProviders.map(p => p.id));
+        const configuredRoutes = new Set(Object.keys(config.bindings || {}));
+
+        // Candidate model providers not yet configured
+        const unconfiguredModelProviders = modelProviders.filter(mp => !configuredIds.has(mp.id) && !configuredRoutes.has(mp.id));
+        const hasDeepSeekPreset = configuredProviders.some(p => p.preset === "deepseek" || p.id === "deepseek");
+        const hasOpenCodeGoPreset = configuredProviders.some(p => p.preset === "opencode-go" || p.id === "opencode-go");
+
+        const providerCard = (provider) => {
+          const route = boundRoute(provider.id);
+          const mp = modelProviders.find(m => m.id === route || m.id === provider.id);
+          const meta = balanceMeta(provider.id);
+          const isCurrentEditing = editing === (route || provider.id);
+
+          return h(
+            "div",
+            { className: "db-provider-row db-provider-card", key: provider.id },
+            h(
+              "div",
+              { className: "db-row-line" },
+              h("span", { className: "db-provider-name" }, mp?.name || provider.name),
+              h("span", { className: provider.balanceEnabled === false ? "db-live disabled" : statuses[provider.id] && statuses[provider.id].status !== "ok" ? "db-live error" : "db-live" }),
+              h("span", { className: "db-tag" }, provider.balanceEnabled === false ? "余额监测已关闭" : "已开启查询"),
+              OFFICIAL_PRESETS.has(provider.preset) && h("span", { className: "db-tag" }, "官方内置"),
+              h("div", { className: "db-spacer" }),
+              h("button", { className: "db-quiet", type: "button", onClick: () => openAdvanced("__new", provider), title: "打开高级设置" }, "高级设置"),
+              h("button", { className: "db-quiet", type: "button", onClick: () => beginEdit(provider) }, isCurrentEditing ? "收起" : "编辑"),
+              h("button", { className: "db-delete", type: "button", onClick: () => remove(provider.id) }, "删除")
+            ),
+            h("div", { className: "db-row-meta" }, ...(Array.isArray(meta) ? meta : meta ? [meta] : [])),
+            isCurrentEditing && inlineEditor()
+          );
+        };
+
+        const isAddingNew = editing && !configuredProviders.some(p => p.id === editing || boundRoute(p.id) === editing);
+
+        const importMenu =
+          importMenuOpen &&
+          h(
+            "div",
+            { className: "db-import-menu", role: "menu", ref: importMenuRef },
+            (!hasDeepSeekPreset || !hasOpenCodeGoPreset) && [
+              h("div", { className: "db-import-group-title", key: "preset-title" }, "推荐官方方案"),
+              !hasDeepSeekPreset &&
+                h(
+                  "button",
+                  {
+                    className: "db-import-item",
+                    key: "preset-deepseek",
+                    type: "button",
+                    onClick: () => {
+                      const deepseekModel = modelProviders.find(m => /deepseek/i.test(`${m.id} ${m.name}`));
+                      beginPreset(deepseekModel, "deepseek");
+                    }
+                  },
+                  h("span", { className: "db-import-item-name" }, "DeepSeek 官方余额"),
+                  h("span", { className: "db-import-item-desc" }, "官方 API")
+                ),
+              !hasOpenCodeGoPreset &&
+                h(
+                  "button",
+                  {
+                    className: "db-import-item",
+                    key: "preset-opencode-go",
+                    type: "button",
+                    onClick: () => {
+                      const opencodeModel = modelProviders.find(m => /opencode[-_ ]?go/i.test(`${m.id} ${m.name}`));
+                      beginPreset(opencodeModel, "opencode-go");
+                    }
+                  },
+                  h("span", { className: "db-import-item-name" }, "OpenCode Go 官方额度"),
+                  h("span", { className: "db-import-item-desc" }, "官方 API")
+                ),
+              h("div", { className: "db-import-divider", key: "preset-div" })
+            ],
+            unconfiguredModelProviders.length > 0 && [
+              h("div", { className: "db-import-group-title", key: "model-title" }, "从“模型”页引入供应商"),
+              ...unconfiguredModelProviders.map(mp => {
+                const isNeco = /^neco$/i.test(mp.id) || /^neco$/i.test(mp.name);
+                return h(
+                  "button",
+                  {
+                    className: "db-import-item",
+                    key: `import-model-${mp.id}`,
+                    type: "button",
+                    onClick: () => (isNeco ? beginNeco(mp) : beginAdd(mp))
+                  },
+                  h("span", { className: "db-import-item-name" }, mp.name),
+                  h("span", { className: "db-import-item-desc" }, isNeco ? "推荐模板" : "复用凭据")
+                );
+              }),
+              h("div", { className: "db-import-divider", key: "model-div" })
+            ],
+            h("div", { className: "db-import-group-title", key: "custom-title" }, "自定义接入"),
+            h(
+              "button",
+              {
+                className: "db-import-item",
+                key: "import-custom",
+                type: "button",
+                onClick: () => beginAdd(null)
+              },
+              h("span", { className: "db-import-item-name" }, "+ 新建自定义 HTTPS 供应商"),
+              h("span", { className: "db-import-item-desc" }, "JSON 路径")
+            )
+          );
+
+        return h(
+          "section",
+          { className: "db-settings" },
+          h(
+            "div",
+            { className: "db-provider-list" },
+            configuredProviders.length === 0 &&
+              !isAddingNew &&
+              h(
+                "div",
+                { className: "db-empty-state" },
+                h("span", null, "暂未接入任何余额供应商")
+              ),
+            ...configuredProviders.map(provider => providerCard(provider)),
+            isAddingNew &&
+              h(
+                "div",
+                { className: "db-provider-row db-provider-card", key: "__new_editor__" },
+                h(
+                  "div",
+                  { className: "db-row-line" },
+                  h("span", { className: "db-provider-name" }, form.name ? `正在添加：${form.name}` : "新建供应商"),
+                  h("span", { className: "db-tag" }, "配置中"),
+                  h("div", { className: "db-spacer" }),
+                  h("button", { className: "db-delete", type: "button", onClick: () => setEditing(null) }, "取消")
+                ),
+                inlineEditor()
+              )
           ),
-          h("span", { className: "db-plugin-card-chevron", "aria-hidden": "true" }, "⌄")
+          advancedModal,
+          h(
+            "div",
+            { className: "db-bottom-settings" },
+            h("span", null, "默认供应商"),
+            h(
+              "select",
+              {
+                className: "db-select",
+                value: config.defaultProviderId || "",
+                onChange: async event => {
+                  const defaultProviderId = event.target.value || null;
+                  try {
+                    await savePreferences({ defaultProviderId });
+                    setMessage("默认供应商已更新");
+                  } catch (error) {
+                    setMessage(error.message);
+                    setMessageKind("error");
+                  }
+                }
+              },
+              h("option", { value: "" }, "自动选择第一个供应商"),
+              configuredProviders.map(provider => h("option", { key: provider.id, value: provider.id }, provider.name))
+            ),
+            h("span", null, "状态栏"),
+            h(
+              "button",
+              {
+                className: `db-toggle${config.statusBar ? " on" : ""}`,
+                "aria-pressed": config.statusBar,
+                onClick: async () => {
+                  const statusBar = !config.statusBar;
+                  try {
+                    await savePreferences({ statusBar });
+                    setMessage("");
+                  } catch (error) {
+                    setMessage(error.message);
+                    setMessageKind("error");
+                  }
+                }
+              },
+              h("i")
+            ),
+            h("div", { className: "db-spacer" }),
+            h(
+              "div",
+              { className: "db-import-wrap" },
+              h(
+                "button",
+                {
+                  className: "db-quiet",
+                  type: "button",
+                  "aria-expanded": importMenuOpen,
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    setImportMenuOpen(!importMenuOpen);
+                  }
+                },
+                "+ 引入供应商 ▾"
+              ),
+              importMenu
+            ),
+            h(
+              "button",
+              {
+                className: "db-quiet",
+                type: "button",
+                onClick: () => {
+                  loadSummary();
+                  refreshBar();
+                }
+              },
+              "刷新"
+            )
+          ),
+          message && h("p", { className: `db-message${messageKind === "error" ? " error" : messageKind === "warn" ? " warn" : ""}`, role: "status" }, message)
+        );
+      } catch (error) {
+        try { window.__balanceSectionError = (error && error.stack) || String(error); } catch {}
+        return h("div", { className: "db-settings" }, h("p", { className: "db-message error" }, "余额查询分区渲染失败: " + String((error && error.message) || error)));
+      }
+    }
+
+    function BalancePluginCard() {
+      const [open, setOpen] = React.useState(false);
+
+      return h(
+        "li",
+        { className: `db-plugin-card${open ? " open" : ""}` },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "db-plugin-card-head",
+            "aria-expanded": open,
+            onClick: () => setOpen(!open)
+          },
+          h(
+            "span",
+            { className: "db-plugin-card-copy" },
+            h("span", { className: "db-plugin-card-title" }, "供应商状态"),
+            h("span", { className: "db-plugin-card-desc" }, "查询模型供应商的余额、额度与健康状态，管理模型列表、输入能力与推理等级。")
+          ),
+          h(
+            "svg",
+            {
+              className: "db-plugin-card-chevron",
+              width: "14",
+              height: "14",
+              viewBox: "0 0 14 14",
+              fill: "none",
+              "aria-hidden": "true"
+            },
+            h("path", {
+              d: "M3.5 5.25L7 8.75L10.5 5.25",
+              stroke: "currentColor",
+              strokeWidth: "1.2",
+              strokeLinecap: "round",
+              strokeLinejoin: "round"
+            })
+          )
         ),
         open && h("div", { className: "db-plugin-card-body" }, h(SettingsSection))
       );
     }
+
     function apply(ctx) {
-      state.connection = ctx.get("connection"); state.sessions = ctx.get("sessions");
+      state.connection = ctx.get("connection");
+      state.sessions = ctx.get("sessions");
       ensureSettingsStyle();
-      ctx.effect(() => { const refreshIfDue = () => { if (document.visibilityState !== "visible") return; const provider = state.provider; if (!provider || refreshDue(provider, provider.syncedAt)) refreshBar(false, false, provider?.id); else renderBar(state.config || { statusBar: true }, state.providers); }; const onVisibilityChange = () => { if (document.visibilityState === "visible") refreshIfDue(); }; const onSessionsChange = () => syncSession(); state.sessionsUnsubscribe = state.sessions?.list?.subscribe?.(onSessionsChange) || null; syncSession(); refreshIfDue(); state.timer = setInterval(refreshIfDue, 30_000); state.clock = setInterval(() => { if (document.visibilityState === "visible" && state.provider) renderBar(state.config || { statusBar: true }, state.providers); }, 30_000); document.addEventListener("visibilitychange", onVisibilityChange); const stopObserving = observeMenuDismissal(); return () => { clearInterval(state.timer); clearInterval(state.clock); document.removeEventListener("visibilitychange", onVisibilityChange); state.sessionsUnsubscribe?.(); state.sessionsUnsubscribe = null; state.sessionId = null; stopObserving(); state.bar?.remove(); document.querySelector(".dsh-balance-provider-menu")?.remove(); state.style?.remove(); state.bar = state.style = state.provider = null; state.dockListeners.clear(); }; }, "dsh-balance-quota: status bar");
-      // 使用 DSH composer dock 插槽，由宿主负责状态栏挂载与会话切换，不再扫描页面 DOM。
+
+      ctx.effect(() => {
+        const refreshIfDue = () => {
+          if (document.visibilityState !== "visible") return;
+          const provider = state.provider;
+          if (!provider || refreshDue(provider, provider.syncedAt)) refreshBar(false, false, provider?.id);
+          else renderBar(state.config || { statusBar: true }, state.providers);
+        };
+        const onVisibilityChange = () => {
+          if (document.visibilityState === "visible") refreshIfDue();
+        };
+        const onSessionsChange = () => syncSession();
+
+        state.sessionsUnsubscribe = state.sessions?.list?.subscribe?.(onSessionsChange) || null;
+        syncSession();
+        refreshIfDue();
+        state.timer = setInterval(refreshIfDue, 30_000);
+        state.clock = setInterval(() => {
+          if (document.visibilityState === "visible" && state.provider) renderBar(state.config || { statusBar: true }, state.providers);
+        }, 30_000);
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        const stopObserving = observeMenuDismissal();
+
+        return () => {
+          clearInterval(state.timer);
+          clearInterval(state.clock);
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+          state.sessionsUnsubscribe?.();
+          state.sessionsUnsubscribe = null;
+          state.sessionId = null;
+          stopObserving();
+          state.bar?.remove();
+          closeHealthModal();
+          document.querySelector(".dsh-balance-provider-menu")?.remove();
+          state.style?.remove();
+          state.bar = state.style = state.provider = null;
+          state.dockListeners.clear();
+        };
+      }, "dsh-balance-quota: status bar");
+
       ctx.effect(() => ctx.slots.inject("conversation.composer.dock", () => ctx.slots.register({ name: "conversation.composer.dock", id: "dsh-balance-quota", order: 40 }, BalanceDock)), "dsh-balance-quota: composer dock");
       ctx.effect(() => ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({ name: "settings.plugin.item", key: "dsh-balance-quota", id: "dsh-balance-quota", order: 40, label: () => "供应商状态" }, BalancePluginCard)), "dsh-balance-quota: settings");
     }
-    exports.apply = apply; exports.inject = inject; return module.exports;
+
+    exports.apply = apply;
+    exports.inject = inject;
+    return module.exports;
   }
 });
