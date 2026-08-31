@@ -14,6 +14,18 @@
 
 </div>
 
+## Screenshots
+
+### Test a health endpoint and inspect its JSON
+
+![Test a health endpoint and inspect JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
+
+### Bind fields, transform values, and preview results
+
+![Bind health monitoring fields](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
+
+> See [`packages/dsh-balance/README.md`](./packages/dsh-balance/README.md) for the complete feature table and five-step guide.
+
 ---
 
 `dsh-balance-quota` brings provider balance, quota, and external model health into
@@ -159,10 +171,6 @@ The provider's **Advanced settings → Health monitoring** section accepts publi
 in the left JSON tree, then bind model name, status, availability, TTFT, response time,
 history, and custom fields. Number-type custom fields have independent input units
 (ms/s), display units (follow/ms/s), and 0–2 decimal places.
-
-![Test a health endpoint and inspect JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
-
-![Bind health fields and choose transforms](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
 
 See the [npm package guide](./packages/dsh-balance/README.md) for the complete walkthrough,
 field table, conversion examples, and troubleshooting.

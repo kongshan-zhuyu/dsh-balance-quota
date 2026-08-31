@@ -14,6 +14,18 @@ Web 界面提供安全可靠的余额与额度状态栏。
 
 </div>
 
+## 界面预览
+
+### 测试健康监测接口并预览 JSON
+
+![测试健康监测接口并预览 JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
+
+### 绑定字段、转换数据并实时预览
+
+![绑定健康监测字段](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
+
+> 完整功能表与 5 步使用教程见 [`packages/dsh-balance/README.md`](./packages/dsh-balance/README.md)。
+
 ---
 
 `dsh-balance-quota` 把模型供应商的余额、额度与外部健康状态直接带到 DSH Web。
@@ -139,10 +151,6 @@ JSON 属性路径、固定 ISO 4217 币种或从响应读取、自定义请求�
 ## 📡 外部模型状态
 
 供应商右侧的「高级设置」支持按监测源 Tab 接入任意**公网 HTTPS + GET + JSON** 状态接口。每个监测源独立一个 Tab；填写接口后点击「测试/解析 JSON」，再从左侧 JSON 树绑定模型列表、模型名称、状态、可用率、TTFT、响应耗时、历史记录和自定义字段。数字型自定义字段可独立设置接口单位（ms/s）、显示单位（跟随/ms/s）和 0–2 位小数。
-
-![填写健康监测接口并解析 JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
-
-![绑定健康监测字段并选择转换方式](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
 
 完整的逐步教程、字段表格、换算示例和保存错误排查见 [npm 包使用文档](./packages/dsh-balance/README.md)。
 
