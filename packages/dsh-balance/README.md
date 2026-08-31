@@ -12,6 +12,8 @@
 
 在 DSH 对话输入框下方显示供应商余额/额度；可接入第三方 JSON 状态接口，展示模型健康状态、可用率、TTFT、响应耗时、历史记录和自定义指标。
 
+[GitHub English README](../../README.md) · [GitHub 中文 README](../../README.zh-CN.md)
+
 > 当前版本：**0.3.3** · 上一个 npm 版本：**0.3.2**
 
 ## 安装

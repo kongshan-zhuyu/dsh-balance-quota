@@ -2,302 +2,253 @@
 
 # dsh-balance-quota
 
-**Know your spend before you send.** A secure balance & quota status bar for
-[DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH) Web.
+**Balance, quota, and model-health monitoring for DeepSeek Harness Web**
 
 [![npm version](https://img.shields.io/npm/v/dsh-balance-quota?style=flat-square&color=4c8bf5)](https://www.npmjs.com/package/dsh-balance-quota)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg?style=flat-square)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg?style=flat-square)](https://nodejs.org)
 [![Platform](https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey.svg?style=flat-square)](https://github.com/kongshan-zhuyu/dsh-balance-quota)
 
 **English** · [简体中文](./README.zh-CN.md)
 
 </div>
 
-## Screenshots
+`dsh-balance-quota` displays provider balance or quota below the DSH chat composer. It can also consume third-party JSON status APIs and show model health, availability, TTFT, response time, history, and custom metrics.
 
-### Configure balance providers
+> Current development version: **0.3.3** · Previous npm release: **0.3.2**
 
-![Provider status settings](./packages/dsh-balance/docs/images/01-provider-settings.png)
+## Complete feature map
 
-### Balance status below the chat composer
+| Area | Features |
+| --- | --- |
+| Official presets | DeepSeek balance and OpenCode Go rolling/weekly/monthly quota |
+| Custom balance | Public HTTPS, GET/bodyless POST, custom headers, timeout, refresh interval |
+| JSON extraction | Property paths, array indexes, optional chaining, up to five `??` fallbacks |
+| Amount handling | Static/dynamic currency, amount divisor, unsaved-draft testing |
+| Status bar | Balance, update time, force refresh, and health entry below the composer |
+| Provider selection | Default provider, inline switching, per-conversation memory |
+| Model settings | Model catalog, context window, text/image input, reasoning levels |
+| Health monitoring | External JSON API, status, availability, TTFT, response time, history |
+| Visual binding | Select a preview slot, then select a JSON field; preview updates immediately |
+| All-model preview | Preview up to 50 models with current mappings without another request |
+| Transforms | Text, number, percentage, status, status-value maps, percentage multipliers |
+| Number formatting | Per-field input unit, display unit, and 0–2 decimal places |
+| Custom fields | Error rate, empty response, common errors, or any model metric |
+| Cache and refresh | Shared Host balance cache, health-preview cache, pause while hidden |
+| Credential security | Reuses DSH credential refs; API keys never enter browser configuration |
+| Network security | Public HTTPS, DNS pinning, rebinding protection, private-IP/redirect blocking |
 
-![Chat balance status bar](./packages/dsh-balance/docs/images/05-chat-status-bar.png)
-
-### Model health details
-
-![Model health details](./packages/dsh-balance/docs/images/07-health-details.png)
-
-> See [`packages/dsh-balance/README.md`](./packages/dsh-balance/README.md) for the complete balance setup, both Advanced Settings tabs, field binding, status bar, and health-details guide.
-
----
-
-`dsh-balance-quota` brings provider balance, quota, and external model health into
-DSH Web. The current development version is **0.3.3**; the previous npm release was
-**0.3.2**. Version 0.3.3 adds visual JSON field binding, custom-field transforms, and
-per-number input unit, display unit, and decimal precision. It ships as one installable
-package containing the Host query service, Web status bar, settings UI, and release bundle.
-
-> **🎯 What it does** — Shows a live balance/quota strip in the composer, with
-> per-conversation provider memory and a one-click switch menu.
-> **🧩 Compatibility** — DSH Web, Node.js 22+; official presets for DeepSeek and
-> OpenCode Go, plus any public HTTPS balance endpoint.
-> **🔐 Security** — HTTPS-only, DNS-rebinding protected; API keys stay host-side in
-> the DSH keychain and never reach the browser.
-
-- ✅ **Official presets** — DeepSeek balance and OpenCode Go quota out of the box.
-- 🔐 **Secure by default** — HTTPS-only, DNS-rebinding protected, credentials in the DSH keychain.
-- 🎯 **Custom any provider** — plug in any public HTTPS balance/quota endpoint with JSON-path extraction.
-- 🧠 **Per-conversation memory** — each chat remembers the provider you picked for it.
-
----
-
-## 🖥️ Interface at a glance
-
-The plugin paints a compact strip **right below the message input** in every chat:
-
-```text
-  ● DeepSeek  · 可用余额  ¥12.34    3 分钟前更新  [↻]
-   └─ green dot = healthy        bold = the value        ↻ = force refresh
-```
-
-- **Status bar** — a small, unobtrusive line: a healthy/unhealthy dot, the provider
-  name, then the balance (`· 可用余额 ¥12.34`) or usage windows
-  (`· 滚动 12% · 每周 45%` for OpenCode Go), a last-updated hint, and a ↻ refresh
-  button.
-- **Provider menu** — click the provider name and a small dropdown opens, listing
-  every configured provider with its current value and a ✓ on the active one.
-- **Settings** — a **供应商状态 / Provider Status** card under **Settings → Plugins** lists
-  providers with a live status dot, per-provider meta (balance or usage %), an
-  "Edit / Delete" action, a model-route binding selector, a default-provider selector,
-  plus a global status-bar on/off toggle and a refresh button. The provider editor also
-  has a **Test** action for checking the unsaved draft without saving it.
-
----
-
-## ✨ Features
-
-- **Balance & quota at a glance** — shows available balance for DeepSeek, or
-  rolling / weekly / monthly usage for OpenCode Go, right in the composer.
-- **One-click provider switching** — click the provider name in the status bar to
-  open a menu and swap providers on the fly.
-- **Per-conversation memory** — the provider you choose sticks to that conversation
-  and is restored when you return; new or unselected conversations use the configured
-  default provider, then fall back to the first configured provider.
-- **Official presets** — DeepSeek `/user/balance` and OpenCode Go usage, verified.
-- **Custom providers** — any public HTTPS balance/quota endpoint, `GET` or body-less
-  `POST`, custom headers, timeout, cache interval, currency, and amount conversion.
-- **Powerful JSON-path extraction** — optional chaining (`?.`) and up to five
-  `??` fallbacks, e.g. `$.remaining ?? $.quota?.remaining ?? $.balance`.
-- **Reuses your model config** — prefers the base URL and credential ref already
-  configured on the DSH Models page.
-- **Efficient** — per-provider refresh interval (default 30 min), no background
-  polling, shared Host cache, and a manual force-refresh button.
-
-## 📦 Installation
+## Installation
 
 Requires **Node.js 22+** and the DSH CLI.
 
-Install the latest release:
-
 ```bash
 dsh plugin --profile web add dsh-balance-quota
-```
-
-Restart the Web profile after installing or updating:
-
-```bash
 dsh web
 ```
 
-Verify it is installed:
+Restart `dsh web` after installation or upgrade. Verify installation with:
 
 ```bash
 dsh plugin --profile web list
 ```
 
-> [!NOTE]
-> Removal uses the `plugin remove` command shown in your current `dsh plugin --help`;
-> the remove flag varies across DSH releases, so this repo does not hard-code an
-> unverified variant.
+# Complete walkthrough
 
-### Local development
+All seven screenshots come from the current plugin running in DSH Web. Provider names, URLs, balances, and model names were replaced with demo values; the UI layout and controls were not redrawn.
+
+## 1. Where to configure balance
+
+Open **Settings → Plugins → Plugin configuration → 供应商状态 (Provider Status)**.
+
+This page controls balance queries, provider editing, Advanced Settings, the default provider, the chat status bar, and manual refresh.
+
+![Provider status settings](./packages/dsh-balance/docs/images/01-provider-settings.png)
+
+- DeepSeek and OpenCode Go can use built-in official presets.
+- Click **编辑 (Edit)** for a custom balance API.
+- **高级设置 (Advanced Settings)** contains Model Settings and Health Monitoring.
+- The default-provider option controls new conversations.
+- The status-bar option controls the strip below the chat composer.
+
+## 2. Edit a balance provider
+
+Click **编辑 (Edit)** on a provider row:
+
+![Balance provider editor](./packages/dsh-balance/docs/images/02-balance-editor.png)
+
+Configure the display name, endpoint, GET/bodyless POST, balance JSON path, static or dynamic currency, amount conversion, headers, refresh interval, and timeout.
+
+```text
+Balance: $.remaining ?? $.quota?.remaining ?? $.balance
+Currency: $.unit ?? $.quota?.unit ?? "USD"
+```
+
+**测试 (Test)** validates only the current unsaved draft. It does not write formal configuration, credentials, or production cache. Save after the result is correct.
+
+## 3. Advanced Settings tab 1: Model Settings
+
+Click **高级设置 (Advanced Settings)**. The first tab is **模型设置 (Model Settings)**:
+
+![Advanced Model Settings tab](./packages/dsh-balance/docs/images/03-advanced-models.png)
+
+It manages the provider's model ID/display name, context window, text/image input capabilities, and default/available reasoning levels.
+
+This is separate from balance and health: Edit owns balance settings; the second Advanced Settings tab owns external monitoring.
+
+## 4. Advanced Settings tab 2: Health Monitoring
+
+Switch to **健康监测 (Health Monitoring)**:
+
+![Advanced Health Monitoring tab](./packages/dsh-balance/docs/images/04-health-monitor.png)
+
+Setup flow:
+
+1. Enable health monitoring.
+2. Select a custom request.
+3. Enter a public HTTPS GET JSON endpoint.
+4. Click **测试 (Test)**.
+5. Inspect the full JSON tree on the left.
+6. Bind fields and preview status on the right.
+7. Use **预览全部模型 (Preview all models)** to validate every mapping.
+8. Save the monitor.
+
+Health monitoring reads third-party monitoring data. It does not invoke chat models or consume model quota.
+
+### Field binding
+
+Bind the model list first: select the Model List slot on the right, then select an array such as `$.models` on the left.
+
+| Field | Example path | Purpose |
+| --- | --- | --- |
+| Model name | `$.model` | Card title |
+| Group | `$.group` | Group badge |
+| Status | `$.status` | Healthy, failed, warning, unknown |
+| Availability | `$.availability` | Current availability |
+| TTFT | `$.ttft_ms` | Time to first token |
+| Response time | `$.latency_ms` | Request duration |
+| History array | `$.history` | Recent records |
+| History status | `$.state` | Per-record state |
+| History time | `$.time` | Per-record timestamp |
+| History error | `$.message` | Per-record error |
+
+### Transforms, status maps, and numeric formatting
+
+- **Text** displays the original value.
+- **Number** converts numeric values and applies units and precision.
+- **Percentage** supports automatic scaling, forced ×100, or raw value plus `%`.
+- **Status** converts values into healthy, failed, warning, or unknown.
+
+Custom status values can use **值映射 (Value mapping)**:
+
+```text
+healthy → healthy
+warning → warning
+offline → failed
+```
+
+Selecting **Number** for a custom field reveals three settings:
+
+| Setting | Values |
+| --- | --- |
+| Input unit | `ms`, `s` |
+| Display unit | follow input, `ms`, `s` |
+| Decimal places | 0, 1, 2 |
+
+For example, `1250ms` displayed as seconds with two decimals becomes `1.25s`. Settings are stored independently per field.
+
+## 5. Where the status bar appears
+
+Enable **状态栏 (Status bar)** at the bottom of Provider Status, then return to any conversation. It appears **directly below the chat composer**:
+
+![Balance status below the chat composer](./packages/dsh-balance/docs/images/05-chat-status-bar.png)
+
+From left to right: health dot, current provider, balance/quota, update time, force refresh, and the health-monitor icon.
+
+## 6. Switch providers
+
+Click the provider name in the status bar:
+
+![Provider switcher](./packages/dsh-balance/docs/images/06-provider-switcher.png)
+
+- The active provider has a check mark.
+- Selection is remembered independently per conversation.
+- New conversations use the configured default provider.
+- `↻` bypasses cache and refreshes the current balance immediately.
+
+## 7. View health after enabling monitoring
+
+After health monitoring is enabled and saved for the current provider, an ECG icon appears next to refresh. Click it to request the endpoint and open details:
+
+![Model health details](./packages/dsh-balance/docs/images/07-health-details.png)
+
+The dialog shows model/failure/warning counts, group and status, availability, average TTFT and response time, custom metrics, recent-history bars, and manual refresh.
+
+Health represents the third-party monitor, not the current account itself.
+
+## Refresh and caching
+
+- Each balance provider has its own refresh interval; default is 30 minutes.
+- Automatic refresh pauses while the page is hidden.
+- Multiple conversations share Host balance cache.
+- Manual refresh bypasses cache.
+- Health JSON previews are cached per monitor.
+- Deleting a monitor deletes its preview cache.
+
+## FAQ
+
+### The status bar is missing
+
+Configure at least one provider, enable Status Bar at the bottom of Provider Status, and restart `dsh web` after installation or upgrade.
+
+### The health icon is missing
+
+Enable, test, and save Health Monitoring under Advanced Settings. The icon only appears when the current provider has an enabled health monitor.
+
+### Saving reports `invalid external custom field`
+
+Bind the model list first, then select a field inside a model item. Name and path must be non-empty; `$.last_errors[0]` is valid. Version 0.3.3 trims whitespace and ignores unfinished blank fields.
+
+### A query fails
+
+Confirm the endpoint is public HTTPS without redirects, the credential ref resolves, and JSON paths match the response. Private, loopback, and internal destinations are rejected.
+
+## Security boundary
+
+- API keys are managed by DSH `credentials` and never enter browser configuration.
+- Only public HTTPS is allowed.
+- Resolved public IPs are pinned to reduce DNS-rebinding risk.
+- Private/loopback addresses, redirects, dangerous headers, and oversized responses are rejected.
+- JSON paths reject `__proto__`, `constructor`, and `prototype`.
+- Health monitoring does not execute page scripts, discover hidden browser APIs, or support Cookie/authenticated monitor endpoints.
+
+See [`SECURITY.md`](./packages/dsh-balance/SECURITY.md).
+
+## Development and verification
+
+`packages/dsh-balance` is the only public package.
 
 ```bash
 pnpm install
-pnpm dev:install   # installs only packages/dsh-balance, picks the right DSH CLI per OS
-```
-
-## ⚙️ Configuration
-
-Open **Settings → Plugins → Provider Status (供应商状态)**.
-
-1. For **DeepSeek** or **OpenCode Go**, click **Use official preset** on the matching
-   model provider.
-2. The plugin reuses the credential ref from the Models page — it never overwrites
-   or deletes that shared credential.
-3. For any other provider, choose **Add balance query**, enter the public HTTPS
-   balance/quota endpoint and the JSON path.
-
-You can choose a default provider at the bottom of the settings section, enable or
-disable the status bar, and bind a provider to a model route for tidier organization.
-The **Test** button in the provider editor checks the current unsaved form and never
-saves the provider or updates the formal cache.
-
-### Custom provider example
-
-```text
-Balance path:    $.remaining ?? $.quota?.remaining ?? $.balance
-Currency:        $.unit ?? "USD"
-```
-
-Supported: public HTTPS endpoints only, `GET` or body-less `POST`, JSON property
-paths with `?.` and up to five `??` branches, fixed ISO 4217 currency or read-from-
-response, custom request headers, timeout, cache interval, and amount conversion.
-
-### Options
-
-| Option | Default | Description |
-| --- | --- | --- |
-| `statusBar` | `true` | Show/hide the balance bar in the composer. |
-| `queryIntervalMinutes` | `30` | Per-provider refresh interval (0 disables auto refresh). |
-| `timeoutSeconds` | `10` | Request timeout for a custom provider. |
-| `method` | `GET` | `GET` or body-less `POST`. |
-| `responsePath` | — | JSON path to the balance value, with `?.` / `??` support. |
-| `currency` | `"USD"` | Fixed ISO 4217 code, or an expression like `$.unit ?? "USD"`. |
-| `valueDivisor` | `1` | Raw value ÷ divisor = displayed amount (for unit-based quotas). |
-| `headers` | `{}` | Extra request headers (`Authorization` is auto-injected).
-
-## 📡 External model status
-
-The provider's **Advanced settings → Health monitoring** section accepts public
-**HTTPS + GET + JSON** status APIs. Test/parse the endpoint, select the model-list array
-in the left JSON tree, then bind model name, status, availability, TTFT, response time,
-history, and custom fields. Number-type custom fields have independent input units
-(ms/s), display units (follow/ms/s), and 0–2 decimal places.
-
-See the [npm package guide](./packages/dsh-balance/README.md) for the complete walkthrough,
-field table, conversion examples, and troubleshooting.
-
-This feature only reads third-party monitoring data. It does not call your model APIs, store model credentials, or consume model quota. The result represents the external monitor, not your current account health.
-
-Example Input mapping:
-
-```text
-API:          https://status.input.im/api/status
-Model list:   $.services
-Model:        $.model
-Status:       $.last.ok
-Availability: $.uptime_pct
-History:      $.history
-```
-
-Example Neco mapping:
-
-```text
-API:          https://speed.sbbbbbbbbb.xyz/api/pulse?window=604800
-Model list:   $.models
-Model:        $.model
-Status:       $.health
-Availability: $.success_rate
-TTFT:         $.avg_ttft_ms
-Response:     $.avg_resp_sec (unit: seconds)
-```
-
-Only JSON field mappings are supported; the plugin does not execute webpage scripts or discover hidden page APIs, and does not support POST, cookies, or authentication in this version. The API URL still undergoes public HTTPS, DNS, redirect, response-size, and safe-path validation.
-
-## 🧠 Provider selection
-
-The status bar always shows the provider **you** selected. The menu remembers the
-choice **per conversation** — switch conversations and the bar restores that
-conversation's last choice. Conversations you haven't touched show the first
-configured provider. Settings binding is organizational; the bar no longer
-auto-switches based on the conversation's model.
-
-## 🔄 Refresh & performance
-
-- Each provider has its own `queryIntervalMinutes` (default **30 min**).
-- The plugin does **not** auto-refresh while the page is in the background.
-- On returning to visibility, it refreshes only when the current provider is due.
-- The Host caches per provider, so multiple conversations on the same provider share one result.
-- The status bar's ↻ button force-refreshes, bypassing the cache.
-
-## 🚀 Release workflow
-
-Only `dsh-balance-quota` is independently released. Update the root and package changelogs,
-run `pnpm verify`, commit the version, and create a `vX.Y.Z` tag. GitHub Actions validates
-the tag and changelog, then creates the GitHub Release. Ordinary commits do not create tags
-or Releases.
-
-## 🔐 Credentials & security
-
-Credentials are stored and resolved through the DSH `credentials` service — no OS
-special-casing. Custom API keys never land in the balance JSON config and are never
-returned through the browser config API, and your shared Models-page credentials
-are never overwritten or deleted by the plugin.
-
-Balance endpoints must be **public HTTPS**. The plugin rejects private/loopback
-addresses, internal hostnames, redirects, dangerous request headers, and oversized
-responses, and re-validates DNS on every request to mitigate DNS-rebinding attacks.
-See [SECURITY.md](./SECURITY.md) for details.
-
-## ❓ FAQ
-
-**Why does the status bar show "未配置余额供应商" (no provider configured)?**
-No provider is configured yet — or none is bound to the current conversation.
-Open **Settings → Plugins → Balance** and configure a provider, then the bar will
-pick the first configured one.
-
-**My key shows "查询失败" (query failed) but the endpoint is correct.**
-The plugin only calls public HTTPS endpoints and will refuse private/loopback
-addresses, internal hostnames, and redirects on purpose. Also make sure the
-credential ref resolves (see the Models page) and the JSON path matches the
-response shape. Use the ↻ button to force a fresh query.
-
-**Does the plugin know which account I'm using?** It reuses the credential ref and
-base URL already configured on the DSH Models page, so it tracks whatever model
-account DSH is using — and it never overwrites or deletes that shared credential.
-
-**Will it poll and drain my quota?** No. The page auto-refreshes at most every
-`queryIntervalMinutes` (default 30 min) and only while visible; it never polls in
-the background. The host caches per provider, so multiple conversations share one
-query result.
-
-**Is my API key safe in the browser?** The key never lives in the balance JSON
-config and is never returned through the browser config API — it is resolved
-host-side through the DSH `credentials` service. See [SECURITY.md](./SECURITY.md).
-
-## 🗂️ Project structure
-
-```text
-packages/
-├─ dsh-balance/          # The shipped package: Host, Client, Bundle, tests, docs
-├─ dsh-host-balance/     # Legacy internal Host, kept as a migration regression baseline
-├─ dsh-client-balance/   # Legacy internal Client, kept as a migration regression baseline
-└─ dsh-bundle-balance/   # Legacy internal Bundle, kept as a migration regression baseline
-```
-
-New installs use only `dsh-balance-quota`. The three legacy packages are retained
-solely as regression references and are not published independently.
-
-## ✅ Quality
-
-```bash
+pnpm dev:install
 pnpm check
 pnpm test
 pnpm pack:check
 pnpm verify
 ```
 
-CI runs the same checks on Ubuntu, Windows, and macOS across Node.js 22 and 24.
-The published package uses a `files` allowlist containing only runtime code and docs.
+## Project layout
 
-## 📚 Docs
+```text
+packages/dsh-balance/
+├── lib/host/       # Secure queries, validation, cache, config, health normalization
+├── lib/client/     # DSH Web status bar and settings UI
+├── docs/images/    # Real redacted README screenshots
+├── test/           # Unit and security tests
+├── README.md       # npm package guide
+└── SECURITY.md     # Security boundary
+```
 
-- [Package README](./packages/dsh-balance/README.md)
-- [Security policy](./SECURITY.md)
-- [Changelog](./CHANGELOG.md)
+## License
 
-## 📄 License
-
-[MIT](./LICENSE) © kongshan-zhuyu
+[MIT](./LICENSE)
