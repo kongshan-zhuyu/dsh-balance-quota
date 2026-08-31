@@ -1,9 +1,11 @@
 const PATH_EXPR_SEGMENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const PATH_EXPR_RE = /^(?:\$|response)(?:(?:\.|\?\.)[A-Za-z_$][A-Za-z0-9_$]*){1,8}$/;
 const PATH_EXPR_LITERAL = /^"[A-Za-z0-9 _./:-]{1,32}"$/;
+// 安全 JSON 路径：`$.key` 与 `[数字]` 数组索引段（外部状态源绑定嵌套数组时使用）。
+const SAFE_PATH_RE = /^\$(?:(?:\.[A-Za-z_$][A-Za-z0-9_$]*)|(?:\[\d{1,9}\])){1,16}$/;
 
 export function safePath(value) {
-  return typeof value === "string" && /^\$(?:\.[A-Za-z_$][A-Za-z0-9_$]*){1,8}$/.test(value) && !/(?:__proto__|constructor|prototype)/.test(value);
+  return typeof value === "string" && SAFE_PATH_RE.test(value) && !/(?:__proto__|constructor|prototype)/.test(value);
 }
 
 export function parsePathExpr(value) {
@@ -36,7 +38,29 @@ export function safePathExpr(value) {
 
 export function readJsonPath(data, path) {
   if (!safePath(path)) throw new Error("unsafe JSON path");
-  return path.slice(2).split(".").reduce((value, key) => (value && typeof value === "object" ? value[key] : undefined), data);
+  const segments = [];
+  const rest = path.slice(1); // 跳过 `$`，保留开头的 `.` 或 `[`
+  let i = 0;
+  while (i < rest.length) {
+    if (rest[i] === ".") {
+      const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(rest.slice(i + 1));
+      if (!match) throw new Error("unsafe JSON path");
+      segments.push({ kind: "key", value: match[0] });
+      i += 1 + match[0].length;
+    } else if (rest[i] === "[") {
+      const match = /^\[(\d{1,9})\]/.exec(rest.slice(i));
+      if (!match) throw new Error("unsafe JSON path");
+      segments.push({ kind: "index", value: Number(match[1]) });
+      i += match[0].length;
+    } else {
+      throw new Error("unsafe JSON path");
+    }
+  }
+  return segments.reduce((value, segment) => {
+    if (value === null || value === undefined) return undefined;
+    if (segment.kind === "index") return Array.isArray(value) ? value[segment.value] : undefined;
+    return typeof value === "object" ? value[segment.value] : undefined;
+  }, data);
 }
 
 export function readJsonPathExpr(data, expr) {

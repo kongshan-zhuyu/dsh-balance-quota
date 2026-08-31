@@ -10,6 +10,7 @@ const EXTERNAL_STATUS_PREVIEW_MAX_BYTES = 100_000;
 
 export const EXTERNAL_STATUS_FIELDS = Object.freeze({
   model: "$.model",
+  group: "",
   status: "$.status",
   availability: "$.availability",
   ttft: "$.ttftMs",
@@ -44,6 +45,39 @@ export function safeExternalPath(value, optional = true) {
   return optional && (value === "" || value === null || value === undefined) ? true : safePath(value);
 }
 
+// 自定义指标名称：仅允许 ttft / response 两个键，非空字符串 ≤ 20 字符
+export function safeMetricLabels(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out = {};
+  for (const key of ["ttft", "response"]) {
+    const text = typeof value[key] === "string" ? value[key].trim().slice(0, 20) : "";
+    if (text) out[key] = text;
+  }
+  return out;
+}
+
+// 指标小数位：仅允许 ttft / response 两个键，整数 0-2
+export function safeMetricDecimals(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out = {};
+  for (const key of ["ttft", "response"]) {
+    const number = Number(value[key]);
+    if (Number.isFinite(number) && number >= 0 && number <= 2) out[key] = Math.round(number);
+  }
+  return out;
+}
+
+// 指标显示单位：""（跟随接口单位）/"ms"/"s"，与接口单位（ttftUnit/responseUnit）解耦——
+// 支持接口返回 ms 但按秒展示等组合场景
+export function safeMetricDisplayUnit(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out = {};
+  for (const key of ["ttft", "response"]) {
+    if (value[key] === "ms" || value[key] === "s") out[key] = value[key];
+  }
+  return out;
+}
+
 export async function validateProvider(input) {
   if (!input || !isId(input.id) || typeof input.name !== "string" || input.name.length < 1 || input.name.length > 80) {
     throw new Error("invalid provider identity");
@@ -63,15 +97,28 @@ export async function validateProvider(input) {
   return { id: input.id, name: input.name.trim(), balanceEnabled: input.balanceEnabled !== false, endpoint, method: input.method === "POST" ? "POST" : "GET", responsePath: input.responsePath, currency: typeof input.currency === "string" && /^[A-Z]{3}$/.test(input.currency) ? input.currency : safePathExpr(input.currency) ? input.currency : "CNY", auth: input.auth === "header" ? "header" : "bearer", authHeader: input.auth === "header" && /^[A-Za-z0-9-]{1,64}$/.test(input.authHeader) ? input.authHeader : "Authorization", headers: safeHeaders(input.headers), usageWindows, timeoutSeconds, queryIntervalMinutes, valueDivisor, ...credential };
 }
 
+export function isValidTransform(value) {
+  if (["identity", "number", "percent", "percent100", "percentRaw", "status"].includes(value)) return true;
+  // 自定义映射：{ kind: "map", entries: [{ raw, status }] }，原值精确/忽略大小写匹配到状态
+  if (value && typeof value === "object" && value.kind === "map" && Array.isArray(value.entries)) {
+    return value.entries.length <= 50 && value.entries.every(entry =>
+      entry && typeof entry.raw === "string" && entry.raw.trim().length > 0 && entry.raw.length <= 80 && !/[\r\n]/.test(entry.raw) &&
+      ["ok", "error", "warn", "unknown"].includes(entry.status)
+    );
+  }
+  return false;
+}
+
 export async function validateExternalStatusSource(input) {
   if (!input || !isId(input.id) || typeof input.name !== "string" || input.name.trim().length < 1 || input.name.length > 80) throw new Error("invalid external status source identity");
   const endpoint = await publicEndpoint(input.endpoint);
-  const modelListPath = typeof input.modelListPath === "string" ? input.modelListPath : "$.models";
+  // 未绑定模型列表（空字符串/纯空格）时回退默认路径，允许先保存后绑定
+  const modelListPath = typeof input.modelListPath === "string" && input.modelListPath.trim() ? input.modelListPath.trim() : "$.models";
   if (!safePath(modelListPath)) throw new Error("modelListPath must be a safe JSON path");
   const fields = { ...EXTERNAL_STATUS_FIELDS, ...(input.fields && typeof input.fields === "object" ? input.fields : {}) };
   const customFields = Array.isArray(input.customFields) ? input.customFields.slice(0, 50).map(field => {
     if (!field || typeof field.name !== "string" || !field.name.trim() || field.name.length > 80 || !safeExternalPath(field.path)) throw new Error("invalid external custom field");
-    return { name: field.name.trim(), path: field.path, transform: ["identity", "number", "percent", "status"].includes(field.transform) ? field.transform : "identity" };
+    return { name: field.name.trim(), path: field.path, transform: ["identity", "number", "percent", "percent100", "percentRaw", "status"].includes(field.transform) ? field.transform : "identity" };
   }) : [];
   for (const key of Object.keys(EXTERNAL_STATUS_FIELDS)) if (!safeExternalPath(fields[key])) throw new Error(`invalid external status field: ${key}`);
   const intervalSeconds = Number.isFinite(Number(input.intervalSeconds)) ? Math.max(5, Math.min(86400, Math.trunc(Number(input.intervalSeconds)))) : EXTERNAL_STATUS_DEFAULT_INTERVAL_SECONDS;
@@ -79,5 +126,5 @@ export async function validateExternalStatusSource(input) {
   const preview = input.preview && typeof input.preview === "object" ? input.preview : undefined;
   const previewKeys = Array.isArray(input.previewKeys) ? input.previewKeys.slice(0, 200) : undefined;
   if (preview !== undefined && Buffer.byteLength(JSON.stringify(preview), "utf8") > EXTERNAL_STATUS_PREVIEW_MAX_BYTES) throw new Error("external preview is too large");
-  return { id: input.id, name: input.name.trim(), providerId: typeof input.providerId === "string" && isId(input.providerId) ? input.providerId : "", enabled: input.enabled === true, endpoint, requestType: input.requestType === "custom" ? "custom" : "custom", method: "GET", headers: safeHeaders(input.headers), intervalSeconds, timeoutSeconds: Number.isFinite(Number(input.timeoutSeconds)) ? Math.max(1, Math.min(300, Number(input.timeoutSeconds))) : DEFAULT_REQUEST_TIMEOUT_SECONDS, modelListPath, fields, customFields, transforms: input.transforms && typeof input.transforms === "object" ? Object.fromEntries(Object.entries(input.transforms).filter(([key, value]) => Object.keys(EXTERNAL_STATUS_FIELDS).includes(key) && ["identity", "number", "percent", "status"].includes(value))) : {}, ttftUnit: input.ttftUnit === "s" ? "s" : "ms", responseUnit: input.responseUnit === "s" ? "s" : "ms", ...(preview === undefined ? {} : { preview }), ...(previewKeys === undefined ? {} : { previewKeys }) };
+  return { id: input.id, name: input.name.trim(), providerId: typeof input.providerId === "string" && isId(input.providerId) ? input.providerId : "", enabled: input.enabled === true, endpoint, requestType: input.requestType === "custom" ? "custom" : "custom", method: "GET", headers: safeHeaders(input.headers), intervalSeconds, timeoutSeconds: Number.isFinite(Number(input.timeoutSeconds)) ? Math.max(1, Math.min(300, Number(input.timeoutSeconds))) : DEFAULT_REQUEST_TIMEOUT_SECONDS, modelListPath, fields, customFields, transforms: input.transforms && typeof input.transforms === "object" ? Object.fromEntries(Object.entries(input.transforms).filter(([key, value]) => Object.keys(EXTERNAL_STATUS_FIELDS).includes(key) && isValidTransform(value))) : {}, ttftUnit: input.ttftUnit === "s" ? "s" : "ms", responseUnit: input.responseUnit === "s" ? "s" : "ms", ...(preview === undefined ? {} : { preview }), ...(previewKeys === undefined ? {} : { previewKeys }), labels: safeMetricLabels(input.labels), decimals: safeMetricDecimals(input.decimals), displayUnit: safeMetricDisplayUnit(input.displayUnit) };
 }

@@ -117,7 +117,29 @@ window.__ModuleLoader__.load({
         minute: "2-digit",
         second: "2-digit",
         hour12: false
-      }).format(date);
+    }).format(date);
+    }
+
+    // 未绑定历史记录时，用可用率百分比近似生成健康进度条：
+    // ok 格数向下取整——可用率未满 100% 时至少保留 1 格红色标记损失部分
+    function availabilityProgressBars(availability, total = 60) {
+      const ratio = Number(availability);
+      if (!Number.isFinite(ratio)) return null;
+      const clamped = Math.max(0, Math.min(100, ratio)) / 100;
+      const okCount = Math.floor(clamped * total);
+      return Array.from({ length: total }, (_, index) => ({
+        status: index < okCount ? "ok" : "error",
+        note: "按可用率生成的近似展示"
+      }));
+    }
+
+    // 指标值显示格式化：统一存储的 ms 数值按配置单位（ms/s）与小数位（0-2）格式化
+    function formatMetricValue(ms, unit, decimals) {
+      const number = Number(ms);
+      if (!Number.isFinite(number)) return "";
+      const safeDecimals = Math.max(0, Math.min(2, Number(decimals) || 0));
+      const value = unit === "s" ? number / 1000 : number;
+      return `${value.toFixed(safeDecimals)}${unit === "s" ? "s" : "ms"}`;
     }
 
     function formatCapacity(value) {
@@ -188,10 +210,14 @@ window.__ModuleLoader__.load({
         .db-delete{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border:0;border-radius:18px;background:transparent;color:var(--dsw-alias-state-error-primary);font:14px/22px inherit;cursor:pointer}
         .db-delete:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}
         .db-provider-row .db-quiet,.db-provider-row .db-delete{height:28px;padding:0 10px;border-radius:14px;font-size:12px;line-height:18px}
+        .db-provider-row .db-select.db-query-select{flex:none;height:28px;width:auto;min-width:0;padding:0 26px 0 10px;border-radius:14px;font-size:12px;line-height:18px;background-position:right 8px center}
         .db-quiet:disabled,.db-primary:disabled,.db-delete:disabled,.db-add:disabled,.db-back:disabled{opacity:.4;cursor:default}
         .db-quiet:focus-visible,.db-primary:focus-visible,.db-delete:focus-visible,.db-add:focus-visible,.db-back:focus-visible,.db-select:focus-visible,.db-toggle:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}
-        .db-bottom-settings{display:flex;align-items:center;gap:10px;margin-top:0;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
+        .db-bottom-settings{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin-top:0;padding:14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
+        .db-bottom-settings .db-setting-label{flex:none;white-space:nowrap;color:var(--dsw-alias-label-secondary)}
         .db-bottom-settings .db-quiet{height:30px;padding:0 12px;border-radius:15px;font-size:12px;line-height:18px}
+        .db-bottom-settings .db-select{flex:0 1 auto;width:145px;max-width:100%}
+        .db-bottom-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
         .db-select{box-sizing:border-box;height:32px;max-width:240px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:0 32px 0 10px;font:14px/22px inherit;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-position:right 12px center;background-repeat:no-repeat;background-size:12px 12px}
         .db-select:focus{border-color:var(--dsw-alias-brand-primary);outline:none}
         .db-toggle{width:32px;height:18px;border:0;border-radius:9px;background:var(--dsw-alias-bg-overlay);padding:2px;cursor:pointer;flex:none}
@@ -227,9 +253,9 @@ window.__ModuleLoader__.load({
         .db-primary{border:0;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}
         .db-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}
         .db-message{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px;line-height:18px}
-        .db-message.warn{color:var(--dsw-alias-state-warning-primary)}
+        .db-message.warn{color:var(--dsw-alias-state-warning-primary, #f59e0b)}
         .db-message.error{color:var(--dsw-alias-state-error-primary)}
-        @media(max-width:640px){.db-provider-row .db-delete{padding:0 6px}.db-bottom-settings{flex-wrap:wrap}}
+        @media(max-width:640px){.db-provider-row .db-delete{padding:0 6px}.db-bottom-settings .db-setting-label{min-width:100%}.db-bottom-actions{margin-left:0}}
         @media (prefers-reduced-motion:reduce){.db-toggle i{transition:none}.db-json-preview-loading .db-spinner,.db-endpoint-loading::before{animation:none}}
         .db-provider-card{flex-direction:column;align-items:stretch;gap:0;padding:12px 14px}
         .db-row-line{display:flex;align-items:center;gap:10px;min-width:0}
@@ -263,19 +289,28 @@ window.__ModuleLoader__.load({
         .db-preview-card.ok{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 32%,var(--dsw-alias-border-l2))}
         .db-preview-card.error{border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 32%,var(--dsw-alias-border-l2))}
         .db-preview-card-head{display:flex;align-items:center;gap:7px;min-width:0}
-        .db-preview-card-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+        .db-preview-card-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:16px}
+        .db-preview-group{display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 8px;border-radius:9px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}
+        .db-preview-card-group{margin-bottom:7px}
         .db-preview-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--dsw-alias-label-dimmed)}
         .db-preview-card.ok .db-preview-dot{background:var(--dsw-alias-state-success-primary)}
         .db-preview-card.error .db-preview-dot{background:var(--dsw-alias-state-error-primary)}
-        .db-preview-card.warn .db-preview-dot{background:var(--dsw-alias-state-warning-primary)}
-        .db-preview-state{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+        .db-preview-card.warn .db-preview-dot{background:var(--dsw-alias-state-warning-primary, #f59e0b)}
+        .db-preview-card.unknown .db-preview-dot{background:var(--dsw-alias-label-secondary)}
+        .db-preview-state{margin-left:auto;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+        /* 状态文字按语义着色，与状态点同色系，四种状态有区分度 */
+        .db-preview-card.ok .db-preview-state{color:var(--dsw-alias-state-success-primary,#21aa8b)}
+        .db-preview-card.error .db-preview-state{color:var(--dsw-alias-state-error-primary,#ec1313)}
+        .db-preview-card.warn .db-preview-state{color:var(--dsw-alias-state-warning-primary,#f59e0b)}
+        .db-preview-card.unknown .db-preview-state{color:var(--dsw-alias-label-secondary,#68707b)}
         .db-preview-metrics{display:flex;flex-wrap:wrap;gap:8px 12px;margin:8px 0;font-size:11px;color:var(--dsw-alias-label-secondary)}
-        .db-preview-metrics b{color:var(--dsw-alias-label-primary);font-weight:600}
+        .db-preview-metrics b{color:var(--dsw-alias-label-primary);font-weight:600;overflow-wrap:anywhere}
         .db-preview-history{display:flex;width:100%;min-width:0;gap:clamp(1px,.3vw,2px);align-items:center;height:8px;margin-top:6px;overflow:hidden}
         .db-preview-history i{flex:1 1 0;min-width:0;height:100%;border-radius:1px;background:var(--dsw-alias-border-l2)}
         .db-preview-history i.ok{background:var(--dsw-alias-state-success-primary)}
         .db-preview-history i.error{background:var(--dsw-alias-state-error-primary)}
-        .db-preview-history i.warn{background:var(--dsw-alias-state-warning-primary)}
+        .db-preview-history i.warn{background:var(--dsw-alias-state-warning-primary, #f59e0b)}
+        .db-preview-history i.unknown{background:color-mix(in srgb,var(--dsw-alias-label-dimmed) 55%,transparent)}
         .db-json-preview-box{min-height:120px;max-height:300px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
         .db-json-preview-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:120px;color:var(--dsw-alias-label-dimmed);font-size:13px}
         .db-json-preview-empty svg{width:28px;height:28px;opacity:.4}
@@ -319,19 +354,23 @@ window.__ModuleLoader__.load({
         .db-endpoint-loading::before{content:"";position:absolute;top:0;bottom:0;width:36%;border-radius:1px;background:var(--dsw-alias-brand-primary);animation:db-loading-slide 1.1s ease-in-out infinite}
         @keyframes db-loading-slide{from{transform:translateX(-110%)}to{transform:translateX(320%)}}
         .db-endpoint-row input{flex:1;min-width:0}
-        .db-map-header,.db-map-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,1.4fr) minmax(110px,.8fr) 56px;gap:8px;align-items:center}
-        .db-map-header{padding:0 8px 6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
-        .db-map-row{margin-bottom:8px;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
-        .db-map-row.disabled{opacity:.58}
-        .db-map-row.disabled .db-select{pointer-events:none}
+        .db-map-section{margin:12px 0 4px;padding:14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1)}
+        .db-map-section-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+        .db-map-section-head strong{font-size:13px;font-weight:600}
+        .db-map-section-head span{font-size:12px;color:var(--dsw-alias-label-tertiary)}
+        .db-map-section-hint,.db-map-section-empty{margin:0 0 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+        .db-map-grid-head,.db-map-grid{display:grid;grid-template-columns:minmax(200px,1fr) 150px 30px;gap:8px;align-items:center}
+        .db-map-grid-head{padding-bottom:6px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+        .db-map-grid{margin-bottom:8px}
+        .db-map-grid input{box-sizing:border-box;width:100%;height:32px;min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:0 10px;font:13px inherit}
         .db-icon-button{display:grid;place-items:center;width:30px;height:30px;padding:0}
         .db-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-        .db-map-label{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .db-map-label-input{box-sizing:border-box;height:32px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);padding:0 10px;font:13px inherit}
-        .db-map-transform{max-width:110px}
         .db-test-message{margin:8px 0 12px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
         .db-test-message.error{color:var(--dsw-alias-state-error-primary)}
         .db-test-message.success{color:var(--dsw-alias-state-success-primary)}
+        .db-save-message{margin:0;flex:1;text-align:center;padding:2px 12px;max-height:88px;overflow-y:auto;word-break:break-word;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;font-weight:500}
+        .db-modal-footer{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:14px 18px;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
+        .db-modal-footer .db-quiet,.db-modal-footer .db-primary{white-space:nowrap}
         .db-json-node{margin:2px 0;padding-left:14px;border-left:1px solid var(--dsw-alias-border-l3)}
         .db-json-preview-box>.db-json-node{border-left:0;padding-left:2px}
         .db-json-node>summary{display:flex;align-items:center;gap:6px;padding:2px 6px;border-radius:6px;list-style:none;cursor:pointer;font-family:inherit;font-size:11px;transition:background .15s,color .15s}
@@ -344,7 +383,7 @@ window.__ModuleLoader__.load({
         .db-json-key{color:var(--dsw-alias-label-secondary);font-weight:600}
         .db-json-string{color:var(--dsw-alias-state-success-primary)}
         .db-json-number{color:var(--dsw-alias-brand-primary)}
-        .db-json-boolean{color:var(--dsw-alias-state-warning-primary)}
+        .db-json-boolean{color:var(--dsw-alias-state-warning-primary, #f59e0b)}
         .db-json-null{color:var(--dsw-alias-label-dimmed)}
         .db-json-type{flex:none;margin-left:2px;padding:0 5px;border:1px solid var(--dsw-alias-border-l3);border-radius:4px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px}
         .db-json-type.binding{cursor:pointer;border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
@@ -355,7 +394,7 @@ window.__ModuleLoader__.load({
         .db-preview-all-toggle{height:26px;padding:0 10px;border-radius:13px;font-size:12px;line-height:18px;cursor:pointer}
         .db-preview-all-toggle:hover{background:var(--dsw-alias-interactive-bg-hover)}
         .db-json-preview-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr);height:560px;gap:16px;align-items:stretch}
-        .db-json-preview-split>.db-json-preview-box,.db-json-preview-split>.db-bind-card{width:100%;height:100%;min-height:0;max-height:100%;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+        .db-json-preview-split>.db-json-preview-box,.db-json-preview-split>.db-bind-card{width:100%;height:100%;min-height:0;max-height:100%;box-sizing:border-box;overflow:auto;scrollbar-gutter:stable}
         @media(max-width:760px){.db-json-preview-head,.db-json-preview-split{grid-template-columns:1fr}.db-json-preview-split{grid-template-rows:repeat(2,minmax(0,420px));height:auto}.db-json-preview-split>.db-json-preview-box,.db-json-preview-split>.db-bind-card{height:420px;max-height:420px}}
         .db-bind-card{display:flex;flex-direction:column;gap:14px;min-width:0;padding:18px;border-radius:16px;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 4%,var(--dsw-alias-bg-layer-1));box-shadow:0 8px 24px color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
         .db-bind-list-row{display:flex;align-items:center;gap:8px;padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l3);font-size:11px;color:var(--dsw-alias-label-tertiary)}
@@ -368,25 +407,38 @@ window.__ModuleLoader__.load({
         .db-bind-target.empty b{color:var(--dsw-alias-label-secondary);font-weight:500}
         .db-bind-target.ok{color:var(--dsw-alias-state-success-primary)}
         .db-bind-target.error{color:var(--dsw-alias-state-error-primary)}
-        .db-bind-target.warn{color:var(--dsw-alias-state-warning-primary)}
+        .db-bind-target.warn{color:var(--dsw-alias-state-warning-primary, #f59e0b)}
         .db-bind-dashboard-head{display:flex;align-items:center;gap:12px;min-width:0}
         .db-bind-model-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
         .db-bind-model{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;line-height:22px;font-weight:600}
+        .db-bind-group{flex:none;max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 7px;border-radius:9px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px;font-weight:400}
         .db-bind-model-meta{font-size:11px;color:var(--dsw-alias-label-tertiary)}
         .db-bind-state{display:flex;flex:none;min-width:54px;flex-direction:column;align-items:center;gap:1px;padding:5px 10px;border-radius:14px;background:var(--dsw-alias-bg-module-platform);font-size:12px;font-weight:600}
         .db-bind-status-path{max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:9px;font-weight:500;opacity:.72}
         .db-bind-state.ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);color:var(--dsw-alias-state-success-primary)}
         .db-bind-state.error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}
-        .db-bind-state.warn{background:color-mix(in srgb,var(--dsw-alias-state-warning-primary) 12%,transparent);color:var(--dsw-alias-state-warning-primary)}
+        .db-bind-state.warn{background:color-mix(in srgb,var(--dsw-alias-state-warning-primary, #f59e0b) 12%,transparent);color:var(--dsw-alias-state-warning-primary, #f59e0b)}
         .db-bind-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
         .db-bind-metric-grid>.db-bind-target,.db-bind-card>.db-bind-target{display:block;min-width:0}
         .db-bind-metric-card{display:flex;min-width:0;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--dsw-alias-border-l3);border-radius:12px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 82%,transparent)}
         .db-bind-target.empty .db-bind-metric-value,.db-bind-target.empty .db-bind-availability-value{color:var(--dsw-alias-label-secondary)}
         .db-bind-metric-label{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
         .db-bind-metric-label svg{width:14px;height:14px;flex:none}
+        .db-bind-metric-name{box-sizing:border-box;width:64px;min-width:0;height:20px;padding:0 5px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:18px}
+        .db-bind-metric-opt{box-sizing:border-box;flex:none;height:20px;padding:0 2px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#68707b));font-size:10px;line-height:18px;cursor:pointer}
+        .db-bind-metric-opt:hover,.db-bind-metric-opt:focus{border-color:var(--dsw-alias-border-l2,var(--dsw-alias-border-l1,#d9dee5))}
+        .db-bind-metric-name::placeholder{color:var(--dsw-alias-label-tertiary)}
+        .db-bind-metric-name:focus{outline:none;border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}
         .db-bind-field-path{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px;color:var(--dsw-alias-label-tertiary)}
-        .db-bind-metric-value{font-size:22px;line-height:28px;font-weight:600;color:var(--dsw-alias-label-primary)}
+        .db-bind-metric-value{display:flex;align-items:center;gap:6px;font-size:22px;line-height:28px;font-weight:600;color:var(--dsw-alias-label-primary);min-width:0;word-break:break-all}
         .db-bind-metric-value small{margin-left:3px;font-size:11px;font-weight:500;color:var(--dsw-alias-label-tertiary)}
+        /* 数值行右侧的单位/小数位下拉：小号、弱化、悬停才显边框 */
+        .db-bind-metric-value .db-bind-metric-opt{margin-left:auto;font-size:11px;font-weight:500}
+        /* 指标网格里的「＋ 新增自定义字段」虚线卡片 */
+        .db-bind-add-field{display:grid;place-items:center;min-height:76px;padding:0;border:1px dashed var(--dsw-alias-border-l2);border-radius:12px;background:transparent;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#68707b));font-size:20px;line-height:1;cursor:pointer}
+        .db-bind-add-field:hover{border-color:var(--dsw-alias-state-success-primary,#21aa8b);color:var(--dsw-alias-state-success-primary,#21aa8b)}
+        /* 转换按钮组内嵌的单位/小数位下拉 */
+        .db-bind-actions .db-bind-metric-opt{height:26px}
         .db-bind-availability{display:flex;align-items:end;justify-content:space-between;gap:12px;padding:14px 0;border-top:1px solid var(--dsw-alias-border-l3);border-bottom:1px solid var(--dsw-alias-border-l3)}
         .db-bind-availability-copy{display:flex;min-width:0;flex-direction:column;gap:5px}
         .db-bind-availability-label{font-size:12px;color:var(--dsw-alias-label-tertiary)}
@@ -401,9 +453,12 @@ window.__ModuleLoader__.load({
         .db-bind-history-bars i{flex:1;min-width:2px;border-radius:2px;background:var(--dsw-alias-border-l2)}
         .db-bind-history-bars i.ok{background:var(--dsw-alias-state-success-primary)}
         .db-bind-history-bars i.error{background:var(--dsw-alias-state-error-primary)}
-        .db-bind-history-bars i.warn{background:var(--dsw-alias-state-warning-primary)}
+        .db-bind-history-bars i.warn{background:var(--dsw-alias-state-warning-primary, #f59e0b)}
         .db-bind-history-axis{display:flex;justify-content:space-between;font-size:9px;letter-spacing:.12em;color:var(--dsw-alias-label-dimmed)}
         .db-bind-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+        /* 转换附加配置第二行：数字的单位/小数位、百分比的倍率 */
+        .db-bind-extra-opts{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--dsw-alias-border-l3,var(--dsw-alias-border-l2,#d9dee5))}
+        .db-bind-extra-label{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#68707b))}
         .db-bind-action-btn{height:24px;padding:0 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:22px;cursor:pointer}
         .db-bind-action-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
         .db-bind-action-btn.on{border-color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent);color:var(--dsw-alias-brand-primary)}
@@ -583,14 +638,17 @@ window.__ModuleLoader__.load({
       }
 
       const models = Array.isArray(phase.status?.models) ? phase.status.models : [];
+      // 统计口径与卡片一致：error / warn / unknown 分开计数，不再把警告混进"未知"
       const failed = models.filter(model => model.status === "error").length;
-      const unknown = models.filter(model => model.status !== "ok" && model.status !== "error").length;
+      const warned = models.filter(model => model.status === "warn").length;
+      const unknown = models.filter(model => model.status === "unknown").length;
       const summary = document.createElement("div");
       summary.className = "dsh-health-summary";
       const summaryText = document.createElement("strong");
       summaryText.textContent = `${models.length} 个模型`;
       const summaryState = document.createElement("span");
-      summaryState.textContent = failed ? `${failed} 个失败${unknown ? ` · ${unknown} 个未知` : ""}` : unknown ? `${unknown} 个状态未知` : "全部正常";
+      const parts = [failed && `${failed} 个失败`, warned && `${warned} 个警告`, unknown && `${unknown} 个未知`].filter(Boolean);
+      summaryState.textContent = parts.length ? parts.join(" · ") : "全部正常";
       summary.append(summaryText, summaryState);
       content.append(summary);
 
@@ -605,21 +663,35 @@ window.__ModuleLoader__.load({
       const grid = document.createElement("div");
       grid.className = "db-preview-cards";
       for (const model of models) {
-        const tone = model.status === "ok" ? "ok" : model.status === "error" ? "error" : "warn";
+        // 卡片色调：未知状态独立灰调，与警告黄区分
+        const tone = model.status === "ok" ? "ok" : model.status === "error" ? "error" : model.status === "unknown" ? "unknown" : "warn";
         const card = document.createElement("article");
         card.className = `db-preview-card ${tone}`;
         const head = document.createElement("div");
         head.className = "db-preview-card-head";
         const dot = document.createElement("i");
         dot.className = "db-preview-dot";
+        // 分组名称：host 归一化输出 group 字段（可选绑定），有值才显示标签（独占一行置于卡片顶部）
+        let groupRow = null;
+        if (model.group) {
+          groupRow = document.createElement("div");
+          groupRow.className = "db-preview-card-group";
+          const groupLabel = document.createElement("span");
+          groupLabel.className = "db-preview-group";
+          groupLabel.textContent = model.group;
+          groupLabel.title = `分组：${model.group}`;
+          groupRow.append(groupLabel);
+        }
         const name = document.createElement("strong");
         name.textContent = model.model || "未知模型";
         name.title = name.textContent;
         const status = document.createElement("span");
         status.className = "db-preview-state";
-        status.textContent = tone === "ok" ? "正常" : tone === "error" ? "失败" : "未知";
+        status.textContent = tone === "ok" ? "正常" : tone === "error" ? "失败" : tone === "warn" ? "警告" : "未知";
+        // 分组标签独占一行置于卡片顶部（名称上方）；状态点固定最前：● 名称 状态
         head.append(dot, name, status);
         card.append(head);
+        if (groupRow) card.prepend(groupRow);
 
         const metrics = document.createElement("div");
         metrics.className = "db-preview-metrics";
@@ -631,20 +703,35 @@ window.__ModuleLoader__.load({
           item.append(strong);
           metrics.append(item);
         };
+        // 自定义指标名称/单位/小数位：监测源配置后覆盖默认显示（displayUnits 为解析后的最终显示单位）
+        const metricLabels = phase.status?.labels || {};
+        const metricUnits = phase.status?.units || {};
+        const metricDisplayUnits = phase.status?.displayUnits || {};
+        const metricDecimals = phase.status?.decimals || {};
         if (model.availability !== undefined) addMetric("可用率", `${Number(model.availability).toFixed(2)}%`);
-        if (model.ttftMs !== undefined) addMetric("TTFT", `${model.ttftMs}ms`);
-        if (model.responseMs !== undefined) addMetric("响应", `${model.responseMs}ms`);
+        if (model.ttftMs !== undefined) addMetric(String(metricLabels.ttft || "").trim() || "TTFT", formatMetricValue(model.ttftMs, metricDisplayUnits.ttft || metricUnits.ttft, metricDecimals.ttft) || `${model.ttftMs}ms`);
+        if (model.responseMs !== undefined) addMetric(String(metricLabels.response || "").trim() || "响应", formatMetricValue(model.responseMs, metricDisplayUnits.response || metricUnits.response, metricDecimals.response) || `${model.responseMs}ms`);
         if (model.samples) addMetric("样本", String(model.samples));
+        // 自定义字段：host 归一化输出 models[].custom（{[name]: value}），逐项追加显示
+        for (const [fieldName, value] of Object.entries(model.custom || {})) {
+          if (value === undefined || value === null || value === "") continue;
+          addMetric(fieldName, String(value));
+        }
         if (metrics.childNodes.length) card.append(metrics);
 
-        const records = Array.isArray(model.history) && model.history.length ? model.history.slice(-60) : [{ status: model.status }];
+        // 无历史记录时，绑定可用率则按可用率百分比生成近似进度条，否则显示当前状态单块
+        const records = Array.isArray(model.history) && model.history.length
+          ? model.history.slice(-60)
+          : model.availability !== undefined
+            ? (availabilityProgressBars(model.availability) || [{ status: model.status }])
+            : [{ status: model.status }];
         const history = document.createElement("div");
         history.className = "db-preview-history";
         history.title = "最近健康记录";
         for (const record of records) {
           const bar = document.createElement("i");
-          bar.className = record.status === "ok" ? "ok" : record.status === "error" ? "error" : "warn";
-          bar.title = [formatHistoryAt(record.at), record.error].filter(Boolean).join(" · ") || "健康状态记录";
+          bar.className = record.status === "ok" ? "ok" : record.status === "error" ? "error" : record.status === "unknown" ? "unknown" : "warn";
+          bar.title = [record.note, formatHistoryAt(record.at), record.error].filter(Boolean).join(" · ") || "健康状态记录";
           history.append(bar);
         }
         card.append(history);
@@ -727,6 +814,8 @@ window.__ModuleLoader__.load({
     }
 
     function renderProviderMenu(menu, anchor) {
+      // 未配置任何供应商时无可切换项，点击状态栏不应弹出空菜单。
+      if (!state.providers.length) return;
       menu.replaceChildren();
       for (const item of state.providers) {
         const option = document.createElement("button");
@@ -960,12 +1049,15 @@ window.__ModuleLoader__.load({
     }
 
     // Custom Hook for fetching connected LLM model providers from DSH settings
-    function useModelProviders() {
+    // refreshKey 变化时强制重新拉取，保证模型页/高级设置弹窗的增删改能同步。
+    function useModelProviders(refreshKey = 0) {
       const [modelProviders, setModelProviders] = React.useState([]);
 
       React.useEffect(() => {
         if (!state.connection) return;
-        loadLlmSettingsSnapshot().then(({ directory, settings }) => {
+        // 始终强制刷新（force），设置页/弹窗打开时模型页的增删改立即同步；
+        // refreshKey 仅用于弹窗打开时再触发一次。
+        loadLlmSettingsSnapshot(true).then(({ directory, settings }) => {
           const namespaces = new Map(settings.result.value.namespaces.map(item => [item.ns, item]));
           const atPath = (value, path) => path.reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), value);
           setModelProviders(
@@ -986,7 +1078,7 @@ window.__ModuleLoader__.load({
               })
           );
         }).catch(() => setModelProviders([]));
-      }, []);
+      }, [refreshKey]);
 
       return modelProviders;
     }
@@ -1000,7 +1092,7 @@ window.__ModuleLoader__.load({
       { id: "max", label: "最大 (max)" }
     ];
 
-    function ModelSettingsTab({ provider, boundRoute }) {
+    function ModelSettingsTab({ provider, boundRoute, refreshKey }) {
       const [llmMeta, setLlmMeta] = React.useState(null);
       const [loading, setLoading] = React.useState(true);
       const [error, setError] = React.useState("");
@@ -1053,8 +1145,9 @@ window.__ModuleLoader__.load({
       }, [provider, boundRoute]);
 
       React.useEffect(() => {
-        loadProviderModels();
-      }, [loadProviderModels]);
+        // 弹窗每次打开都强制重新拉取模型配置，避免模型页增删改后读到旧缓存。
+        loadProviderModels(true);
+      }, [loadProviderModels, refreshKey]);
 
       const startEdit = (model) => {
         setEditingModelId(model.id);
@@ -1419,7 +1512,8 @@ window.__ModuleLoader__.load({
         const latestConfigRef = React.useRef(null);
         const balanceSummaryGeneration = React.useRef(0);
         const [editing, setEditing] = React.useState(null);
-        const modelProviders = useModelProviders();
+        const [llmRefreshKey, setLlmRefreshKey] = React.useState(0);
+        const modelProviders = useModelProviders(llmRefreshKey);
         const [importMenuOpen, setImportMenuOpen] = React.useState(false);
         const importMenuRef = React.useRef(null);
         const [testing, setTesting] = React.useState(false);
@@ -1432,13 +1526,14 @@ window.__ModuleLoader__.load({
         const [advancedProvider, setAdvancedProvider] = React.useState(null);
         const [externalPreview, setExternalPreview] = React.useState(null);
         const [externalPreviewing, setExternalPreviewing] = React.useState(false);
-        const [externalPreviewStatus, setExternalPreviewStatus] = React.useState(null);
         const externalPreviewCache = React.useRef(new Map());
         const externalPreviewLoadGeneration = React.useRef(0);
-        const [externalResultOpen, setExternalResultOpen] = React.useState(false);
         const [externalResultError, setExternalResultError] = React.useState("");
         const [bindingSlot, setBindingSlot] = React.useState(null);
         const [externalShowAllPreview, setExternalShowAllPreview] = React.useState(false);
+        const [externalMapOpen, setExternalMapOpen] = React.useState(false);
+        // 当前选中槽位：与 bindingSlot（绑定中，完成即清空）分离，保证绑定完成后按钮组仍显示
+        const [activeSlotKey, setActiveSlotKey] = React.useState(null);
 
         React.useEffect(() => {
           if (!importMenuOpen) return;
@@ -1482,6 +1577,7 @@ window.__ModuleLoader__.load({
           timeoutSeconds: 10,
           modelListPath: "",
           model: "",
+          group: "",
           status: "",
           availability: "",
           ttft: "",
@@ -1501,38 +1597,35 @@ window.__ModuleLoader__.load({
           historyStatusTransform: "status",
           historyErrorTransform: "identity",
           errorTransform: "identity",
+          statusMap: [],
+          historyStatusMap: [],
+          labels: { ttft: "", response: "" },
           ttftUnit: "ms",
-          responseUnit: "ms"
+          responseUnit: "ms",
+          decimals: { ttft: 0, response: 0 },
+          // 显示单位：""=跟随接口单位，可独立选 ms/s（支持接口 ms 按秒展示等组合）
+          displayUnit: { ttft: "", response: "" }
         };
         const [externalForm, setExternalForm] = React.useState(blankExternalForm);
 
         const updateExternalForm = (next, mappingChanged = false) => {
           if (mappingChanged) {
-            setExternalPreviewStatus(null);
             const cached = next.id && externalPreviewCache.current.get(next.id);
             if (cached) externalPreviewCache.current.set(next.id, { ...cached, normalized: null });
-            setExternalResultOpen(false);
             setExternalTestState("idle");
-            setExternalTestMessage("映射已变更，请重新测试");
+            // 「预览全部模型」由 previewStatusCards 基于 previewData 实时计算，绑定后即时刷新，无需重新测试。
           }
           setExternalForm(next);
         };
 
         const [externalCustomFields, setExternalCustomFields] = React.useState([]);
         const [externalFieldEnabled, setExternalFieldEnabled] = React.useState({
-          model: true,
-          status: true,
-          availability: true,
-          ttft: true,
-          response: true,
-          history: true,
-          historyAt: true,
-          historyStatus: true,
-          historyError: true,
-          error: true
+          model: true, group: true, status: true, availability: true, ttft: true, response: true,
+          history: true, historyAt: true, historyStatus: true, historyError: true, error: true
         });
         const [externalTestState, setExternalTestState] = React.useState("idle");
         const [externalTestMessage, setExternalTestMessage] = React.useState("");
+        const [externalSaveMessage, setExternalSaveMessage] = React.useState("");
 
         const loadExternalStatuses = (force = false) => {
           setExternalLoading(true);
@@ -1812,6 +1905,36 @@ window.__ModuleLoader__.load({
           }
         };
 
+        const toggleBalanceEnabled = async (provider, enabled) => {
+          const previous = provider.balanceEnabled !== false;
+          if (previous === enabled) return;
+          try {
+            const data = await api("/provider", {
+              method: "POST",
+              body: JSON.stringify({ ...provider, balanceEnabled: enabled })
+            });
+            const saved = { ...data.provider, headers: provider.headers || {}, valueDivisor: provider.valueDivisor || 1 };
+            const nextConfig = {
+              ...config,
+              providers: config.providers.map(item => item.id === provider.id ? saved : item)
+            };
+            setConfig(nextConfig);
+            state.config = nextConfig;
+            if (!enabled) {
+              const disabled = { id: saved.id, name: saved.name, status: "disabled" };
+              setStatuses(current => ({ ...current, [saved.id]: disabled }));
+              state.providers = state.providers.map(item => item.id === saved.id ? disabled : item);
+              renderBar(nextConfig, state.providers);
+            } else {
+              loadSummary();
+              refreshBar();
+            }
+          } catch (error) {
+            setMessage(error.message);
+            setMessageKind("error");
+          }
+        };
+
         const field = (key, label, type = "text", wide = false) =>
           h(
             "div",
@@ -2016,6 +2139,14 @@ window.__ModuleLoader__.load({
         const externalPayload = () => {
           let generatedName = externalForm.name;
           try { generatedName = generatedName || new URL(externalForm.endpoint).hostname; } catch {}
+          const transformValue = key => {
+            // 映射条目非空时输出 map 结构（优先于普通转换），否则输出所选转换
+            const entries = (externalForm[`${key}Map`] || [])
+              .filter(row => row && row.raw && String(row.raw).trim())
+              .map(row => ({ raw: String(row.raw).trim(), status: ["ok", "error", "warn", "unknown"].includes(row.status) ? row.status : "ok" }));
+            if (entries.length) return { kind: "map", entries };
+            return externalForm[`${key}Transform`] || "identity";
+          };
           return {
             id: externalForm.id || `source-${Date.now().toString(36)}`,
             name: generatedName || "外部监测源",
@@ -2026,10 +2157,12 @@ window.__ModuleLoader__.load({
             method: externalForm.requestMethod || "GET",
             intervalSeconds: Number(externalForm.intervalSeconds) || 60,
             timeoutSeconds: Number(externalForm.timeoutSeconds) || 10,
-            modelListPath: externalForm.modelListPath,
+            // 未绑定模型列表时使用默认路径，避免空字符串导致保存校验失败
+            modelListPath: externalForm.modelListPath || "$.models",
             fields: Object.fromEntries(
               Object.entries({
                 model: externalForm.model,
+                group: externalForm.group,
                 status: externalForm.status,
                 availability: externalForm.availability,
                 ttft: externalForm.ttft,
@@ -2039,30 +2172,43 @@ window.__ModuleLoader__.load({
                 historyStatus: externalForm.historyStatus,
                 historyError: externalForm.historyError,
                 error: externalForm.error
-              }).map(([key, value]) => [key, externalFieldEnabled[key] ? value : ""])
+              }).map(([key, value]) => [key, value])
             ),
             enabledFields: externalFieldEnabled,
+            labels:  {
+              ttft: String(externalForm.labels?.ttft || "").trim().slice(0, 20) || undefined,
+              response: String(externalForm.labels?.response || "").trim().slice(0, 20) || undefined
+            },
             customFields: externalCustomFields
               .filter(field => field.name && field.path)
               .map(field => ({
                 name: field.name,
                 path: field.path,
-                transform: ["identity", "number", "percent", "status"].includes(field.transform) ? field.transform : "identity"
+                // 白名单需与 host validate 一致（含百分比三变体），否则新变体保存时会被降级为 identity
+                transform: ["identity", "number", "percent", "percent100", "percentRaw", "status"].includes(field.transform) ? field.transform : "identity"
               })),
             transforms: {
-              model: externalForm.modelTransform,
-              status: externalForm.statusTransform,
-              availability: externalForm.availabilityTransform,
-              ttft: externalForm.ttftTransform,
-              response: externalForm.responseTransform,
-              history: externalForm.historyTransform,
-              historyAt: externalForm.historyAtTransform,
-              historyStatus: externalForm.historyStatusTransform,
-              historyError: externalForm.historyErrorTransform,
-              error: externalForm.errorTransform
+              model: transformValue("model"),
+              status: transformValue("status"),
+              availability: transformValue("availability"),
+              ttft: transformValue("ttft"),
+              response: transformValue("response"),
+              history: transformValue("history"),
+              historyAt: transformValue("historyAt"),
+              historyStatus: transformValue("historyStatus"),
+              historyError: transformValue("historyError"),
+              error: transformValue("error")
             },
             ttftUnit: externalForm.ttftUnit,
-            responseUnit: externalForm.responseUnit
+            responseUnit: externalForm.responseUnit,
+            decimals: {
+              ttft: Math.max(0, Math.min(2, Math.round(Number(externalForm.decimals?.ttft) || 0))),
+              response: Math.max(0, Math.min(2, Math.round(Number(externalForm.decimals?.response) || 0)))
+            },
+            displayUnit: {
+              ttft: externalForm.displayUnit?.ttft === "s" || externalForm.displayUnit?.ttft === "ms" ? externalForm.displayUnit.ttft : "",
+              response: externalForm.displayUnit?.response === "s" || externalForm.displayUnit?.response === "ms" ? externalForm.displayUnit.response : ""
+            }
           };
         };
 
@@ -2085,57 +2231,60 @@ window.__ModuleLoader__.load({
 
         const previewReady = Boolean(externalPreview?.preview || externalForm.preview);
 
-        const mappingOptions = () =>
-          (externalPreview?.keys || externalForm.previewKeys || [])
-            .filter(item => item.path.startsWith(`${externalForm.modelListPath}[]`))
-            .map(item => ({ ...item, path: `$${item.path.slice(`${externalForm.modelListPath}[]`.length)}` }));
+        const MAP_TARGET_LABELS = { ok: "正常", error: "失败", warn: "警告", unknown: "未知" };
 
-        const transformOptions = (key) =>
-          h(
-            "select",
-            {
-              className: "db-select db-map-transform",
-              value: externalForm[`${key}Transform`] || "identity",
-              onChange: event => updateExternalForm({ ...externalForm, [`${key}Transform`]: event.target.value }, true)
-            },
-            h("option", { value: "identity" }, "直接展示"),
-            h("option", { value: "number" }, "转数字"),
-            h("option", { value: "percent" }, "百分比"),
-            h("option", { value: "status" }, "状态转换")
-          );
+        // 当前样本的健康状态原始值（用于预填映射行与未识别提示）
+        const statusSampleValue = () => {
+          const previewData = externalPreview?.preview || externalForm.preview;
+          const list = previewData && externalForm.modelListPath ? readPreviewPath(previewData, externalForm.modelListPath) : null;
+          const sample = Array.isArray(list) ? list[0] : undefined;
+          const raw = sample && externalForm.status ? readPreviewPath(sample, externalForm.status) : undefined;
+          return raw === undefined || raw === null ? "" : String(raw).trim();
+        };
 
-        const mappingField = (key, label) =>
-          h(
+        // 「状态值映射」独立区块：接口返回的原始值 → 健康状态；配置映射后未命中归未知，不回退内置词表
+        const statusMapSection = () => {
+          const rows = externalForm.statusMap || [];
+          const setRow = (index, patch) => updateExternalForm({ ...externalForm, statusMap: rows.map((row, i) => i === index ? { ...row, ...patch } : row) }, true);
+          const removeRow = index => updateExternalForm({ ...externalForm, statusMap: rows.filter((_, i) => i !== index) }, true);
+          const addRow = () => {
+            // 新行预填当前样本值：最常见的场景就是把样本值映射成正常/失败
+            updateExternalForm({ ...externalForm, statusMap: [...rows, { raw: statusSampleValue(), status: "ok" }] }, true);
+          };
+          const sampleValue = statusSampleValue();
+          const mapped = rows.some(row => row.raw.trim().toLowerCase() === sampleValue.toLowerCase());
+          // 配置映射后，任何未命中值都属于未知；未配置映射时才参考内置词表
+          const unrecognized = sampleValue && !mapped && (rows.length > 0 || normalizeHealthLabel(sampleValue) === "未知");
+          return h(
             "div",
-            { className: `db-map-row${externalFieldEnabled[key] ? "" : " disabled"}` },
-            h("span", { className: "db-map-label" }, label),
-            h(
-              "select",
-              {
-                className: "db-select",
-                value: externalForm[key] || "",
-                disabled: !previewReady,
-                onChange: event => updateExternalForm({ ...externalForm, [key]: event.target.value }, true)
-              },
-              h("option", { value: "" }, ""),
-              ...mappingOptions().map(item => h("option", { key: `${key}-${item.path}`, value: item.path }, `${item.path} · ${item.type}`))
+            { className: "db-map-section" },
+            h("div", { className: "db-map-section-head" },
+              h("strong", null, "状态值映射"),
+              h("span", null, "将接口返回的原始值转换为健康状态；配置映射后，未命中值会显示为未知，不再回退内置词表")
             ),
-            transformOptions(key),
-            h(
-              "button",
-              {
-                className: "db-delete db-icon-button",
-                type: "button",
-                "aria-label": `清除${label}映射`,
-                title: `清除${label}映射`,
-                onClick: () => {
-                  setExternalFieldEnabled({ ...externalFieldEnabled, [key]: false });
-                  setExternalForm({ ...externalForm, [key]: "" });
-                }
-              },
-              h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))
-            )
+            unrecognized && h("p", { className: "db-map-section-hint" }, `当前样本值「${sampleValue}」未被内置词表识别，添加映射后即可正确显示。`),
+            rows.length > 0 && h("div", { className: "db-map-grid-head" }, h("span", null, "原始值"), h("span", null, "映射为"), h("span", null)),
+            ...rows.map((row, index) =>
+              h(
+                "div",
+                { className: "db-map-grid", key: `status-map-${index}` },
+                h("input", { type: "text", placeholder: "原始值，如 UP", value: row.raw, onChange: event => setRow(index, { raw: event.target.value }) }),
+                h(
+                  "select",
+                  { className: "db-select", value: row.status || "ok", onChange: event => setRow(index, { status: event.target.value }) },
+                  ["ok", "error", "warn", "unknown"].map(opt => h("option", { key: opt, value: opt }, MAP_TARGET_LABELS[opt]))
+                ),
+                h(
+                  "button",
+                  { className: "db-delete db-icon-button", type: "button", title: "删除映射", "aria-label": "删除映射", onClick: () => removeRow(index) },
+                  h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))
+                )
+              )
+            ),
+            rows.length === 0 && h("p", { className: "db-map-section-empty" }, "暂无映射，点击下方按钮添加一行，将自动填入当前样本值。"),
+            h("button", { className: "db-header-add", type: "button", onClick: addRow }, "+ 添加映射")
           );
+        };
 
         const listField = h(
           "div",
@@ -2186,17 +2335,24 @@ window.__ModuleLoader__.load({
               })
             });
             setExternalPreview(data);
-            setExternalPreviewStatus(data.normalized || null);
             if (externalForm.id) externalPreviewCache.current.set(externalForm.id, data);
             setExternalForm(current => ({ ...current, preview: data.preview, previewKeys: data.keys }));
-            setExternalTestState("success");
+            if (data.normalized) {
+              setExternalTestState("success");
+              setExternalTestMessage("");
+              setExternalResultError("");
+            } else {
+              // 模型列表路径未绑定或结构不匹配：保留 JSON 预览供点击绑定数组，
+              // 不再把整个测试判定为失败。
+              setExternalTestState("warn");
+              setExternalTestMessage("已获取返回结构，但模型列表路径未绑定或不是数组，请在左侧 JSON 预览中点击数组节点绑定模型列表。");
+              setExternalResultError("");
+            }
             setExternalShowAllPreview(false);
-            setExternalResultOpen(true);
           } catch (error) {
             setExternalTestState("error");
             setExternalTestMessage(error.message || "请求失败");
             setExternalResultError(error.message || "请求失败");
-            setExternalResultOpen(true);
           } finally {
             setExternalPreviewing(false);
           }
@@ -2206,6 +2362,16 @@ window.__ModuleLoader__.load({
           const loadGeneration = ++externalPreviewLoadGeneration.current;
           const saved = (config?.externalStatusSources || []).find(item => item.id === source.id) || source;
           const fields = saved.fields || {};
+          const savedTransform = (key, fallback) => {
+            const value = saved.transforms?.[key];
+            return typeof value === "string" ? value : fallback;
+          };
+          const savedMapEntries = (key) => {
+            const value = saved.transforms?.[key];
+            return value && typeof value === "object" && value.kind === "map" && Array.isArray(value.entries) ? value.entries : [];
+          };
+          // 已配置状态映射的源，进入编辑时自动展开映射区块
+          setExternalMapOpen(savedMapEntries("status").length > 0);
           const cachedPreview = externalPreviewCache.current.get(source.id);
           const savedPreview = saved.preview && saved.previewKeys ? { preview: saved.preview, keys: saved.previewKeys, normalized: null } : null;
           const restoredPreview = cachedPreview || savedPreview;
@@ -2214,6 +2380,7 @@ window.__ModuleLoader__.load({
             ...saved,
             requestMethod: saved.method || "GET",
             model: fields.model || "",
+            group: fields.group || "",
             status: fields.status || "",
             availability: fields.availability || "",
             ttft: fields.ttft || "",
@@ -2223,24 +2390,34 @@ window.__ModuleLoader__.load({
             historyStatus: fields.historyStatus || "",
             historyError: fields.historyError || "",
             error: fields.error || "",
-            modelTransform: saved.transforms?.model || "identity",
-            statusTransform: saved.transforms?.status || "status",
-            availabilityTransform: saved.transforms?.availability || "percent",
-            ttftTransform: saved.transforms?.ttft || "number",
-            responseTransform: saved.transforms?.response || "number",
-            historyTransform: saved.transforms?.history || "identity",
-            historyAtTransform: saved.transforms?.historyAt || "number",
-            historyStatusTransform: saved.transforms?.historyStatus || "status",
-            historyErrorTransform: saved.transforms?.historyError || "identity",
-            errorTransform: saved.transforms?.error || "identity",
+            modelTransform: savedTransform("model", "identity"),
+            statusTransform: savedTransform("status", "status"),
+            availabilityTransform: savedTransform("availability", "percent"),
+            ttftTransform: savedTransform("ttft", "number"),
+            responseTransform: savedTransform("response", "number"),
+            historyTransform: savedTransform("history", "identity"),
+            historyAtTransform: savedTransform("historyAt", "number"),
+            historyStatusTransform: savedTransform("historyStatus", "status"),
+            historyErrorTransform: savedTransform("historyError", "identity"),
+            errorTransform: savedTransform("error", "identity"),
+            statusMap: savedMapEntries("status"),
+            historyStatusMap: savedMapEntries("historyStatus"),
+            labels: { ttft: saved.labels?.ttft || "", response: saved.labels?.response || "" },
+            ttftUnit: saved.ttftUnit === "s" ? "s" : "ms",
+            responseUnit: saved.responseUnit === "s" ? "s" : "ms",
+            decimals: { ttft: Number(saved.decimals?.ttft) || 0, response: Number(saved.decimals?.response) || 0 },
+            displayUnit: {
+              ttft: saved.displayUnit?.ttft === "s" || saved.displayUnit?.ttft === "ms" ? saved.displayUnit.ttft : "",
+              response: saved.displayUnit?.response === "s" || saved.displayUnit?.response === "ms" ? saved.displayUnit.response : ""
+            },
             preview: restoredPreview?.preview,
             previewKeys: restoredPreview?.keys
           });
           setExternalPreview(restoredPreview);
-          setExternalPreviewStatus(restoredPreview?.normalized || null);
           setExternalCustomFields((saved.customFields || []).map(field => ({ ...field })));
           setExternalFieldEnabled({
             model: true,
+            group: true,
             status: true,
             availability: true,
             ttft: true,
@@ -2254,6 +2431,7 @@ window.__ModuleLoader__.load({
           });
           setExternalEditing(source.id);
           setBindingSlot(null);
+          setActiveSlotKey(null);
           setExternalShowAllPreview(false);
           if (!restoredPreview) {
             api(`/external-status-preview/${encodeURIComponent(source.id)}`)
@@ -2261,7 +2439,6 @@ window.__ModuleLoader__.load({
                 if (externalPreviewLoadGeneration.current !== loadGeneration) return;
                 externalPreviewCache.current.set(source.id, data);
                 setExternalPreview(data);
-                setExternalPreviewStatus(data.normalized || null);
                 setExternalForm(current => current.id === source.id ? { ...current, preview: data.preview, previewKeys: data.keys } : current);
               })
               .catch(error => {
@@ -2274,6 +2451,7 @@ window.__ModuleLoader__.load({
 
         const saveExternal = async event => {
           event.preventDefault();
+          setExternalSaveMessage("");
           try {
             const data = await api("/external-status-source", { method: "POST", body: JSON.stringify(externalPayload()) });
             const nextConfig = {
@@ -2286,14 +2464,16 @@ window.__ModuleLoader__.load({
             setExternalEditing(null);
             setAdvancedOpen(false);
             setExternalTestState("success");
-            setExternalTestMessage(data.warning || "配置已保存");
+            setExternalTestMessage("");
             setMessage(data.warning ? `监测源已保存；${data.warning}` : "监测源已保存");
             setMessageKind(data.warning ? "warn" : "ok");
             await loadExternalStatuses(true);
           } catch (error) {
             const detail = error.message || "保存监测源失败";
+            // 保存失败提示显示在操作按钮附近，避免出现在 URL 输入框下方被忽略。
+            setExternalSaveMessage(detail);
             setExternalTestState("error");
-            setExternalTestMessage(detail);
+            setExternalTestMessage("");
             setMessage(detail);
             setMessageKind("error");
           }
@@ -2317,23 +2497,77 @@ window.__ModuleLoader__.load({
           }
         };
 
-        const previewStatusCards = (status) => {
-          if (!status?.models?.length) return null;
-          const tone = model => model.status === "ok" ? "ok" : model.status === "error" ? "error" : "warn";
+        // 「预览全部模型」卡片：直接用已就绪的 previewData + 绑定路径实时计算，
+        // 绑定字段后即时生效，不依赖 host 标准化结果、无需重新请求。
+        const previewStatusCards = () => {
+          const previewData = externalPreview?.preview || externalForm.preview;
+          const list = previewData && externalForm.modelListPath ? readPreviewPath(previewData, externalForm.modelListPath) : null;
+          if (!Array.isArray(list) || !list.length) return null;
+          const enabled = key => externalFieldEnabled[key] !== false;
+          const readBound = (item, key) => (enabled(key) && externalForm[key]) ? readPreviewPath(item, externalForm[key]) : undefined;
+          const customEntries = externalCustomFields.filter(field => field.name && field.path);
+          const models = list.slice(0, 50).map((item, index) => {
+            const rawName = readBound(item, "model");
+            const name = applyClientTransform(rawName, externalForm.modelTransform || "identity", "model") || `模型 ${index + 1}`;
+            // 分组名称：可选字段，未绑定或空值时不显示
+            const rawGroup = readBound(item, "group");
+            const group = rawGroup === undefined || rawGroup === null || rawGroup === "" ? undefined : String(rawGroup).trim().slice(0, 80) || undefined;
+            // 历史记录先于 status 计算：status 未绑定时与 host 一致回退最后一条历史的状态
+            let history = [];
+            const rawHistory = readBound(item, "history");
+            if (Array.isArray(rawHistory)) {
+              history = rawHistory.slice(-60).map(record => ({
+                at: externalForm.historyAt ? readPreviewPath(record, externalForm.historyAt) : undefined,
+                status: externalForm.historyStatus ? clientStatusTone(readPreviewPath(record, externalForm.historyStatus), "historyStatus") : "unknown",
+                error: externalForm.historyError ? String(readPreviewPath(record, externalForm.historyError) ?? "").trim() : undefined
+              }));
+            }
+            const rawStatus = readBound(item, "status");
+            const status = rawStatus === undefined
+              ? (history.length ? history[history.length - 1].status : "unknown")
+              : clientStatusTone(rawStatus, "status");
+            const rawAvailability = readBound(item, "availability");
+            let availability;
+            if (rawAvailability !== undefined) {
+              const number = Number(rawAvailability);
+              if (Number.isFinite(number)) {
+                // 与 host 百分比三模式对齐：percent=自动、percent100=×100、percentRaw=原值即百分数
+                const mode = externalForm.availabilityTransform;
+                // number/identity 表示接口已给出百分数；percent 系列才按对应倍率换算
+                const percent = mode === "number" || mode === "identity" ? number : mode === "percent100" ? number * 100 : mode === "percentRaw" ? number : (number >= 0 && number <= 1 ? number * 100 : number);
+                availability = Math.max(0, Math.min(100, percent));
+              }
+            }
+            const rawResponse = readBound(item, "response");
+            const responseMs = rawResponse === undefined ? undefined : clientLatencyMs(rawResponse, externalForm.responseUnit);
+            const rawTtft = readBound(item, "ttft");
+            const ttftMs = rawTtft === undefined ? undefined : clientLatencyMs(rawTtft, externalForm.ttftUnit);
+            // 自定义字段：按绑定路径读取样本值并应用字段转换，空值不显示
+            const custom = Object.fromEntries(customEntries.map(field => {
+              const value = clientCustomValue(readPreviewPath(item, field.path), field.transform);
+              return [field.name, value === undefined ? "" : String(value)];
+            }).filter(([, value]) => value !== ""));
+            return { name: String(name).slice(0, 160), group, status, availability, responseMs, ttftMs, history, custom };
+          });
+          const errors = models.filter(model => model.status === "error").length;
+          const overall = errors ? (errors === models.length ? "error" : "warn") : models.length ? "ok" : "unknown";
+          // 卡片色调：ok / error / warn / unknown（未知独立灰调，不再混入警告黄）
+          const tone = model => model.status === "ok" ? "ok" : model.status === "error" ? "error" : model.status === "unknown" ? "unknown" : "warn";
           return h(
             "div",
             { className: "db-preview-status" },
-            h("div", { className: "db-preview-status-head" }, h("strong", null, "模型状态预览"), h("span", null, `${status.models.length} 个模型 · ${status.status === "ok" ? "整体正常" : status.status === "error" ? "存在失败" : "部分异常"}`)),
+            h("div", { className: "db-preview-status-head" }, h("strong", null, "模型状态预览"), h("span", null, `${models.length} 个模型 · ${overall === "ok" ? "整体正常" : overall === "error" ? "存在失败" : "部分异常"}`)),
             h(
               "div",
               { className: "db-preview-cards" },
-              ...status.models.slice(0, 50).map(model =>
+              ...models.map((model, index) =>
                 h(
                   "div",
-                  { className: `db-preview-card ${tone(model)}`, key: model.model, title: `${model.model} 最近一次检测结果` },
-                  h("div", { className: "db-preview-card-head" }, h("span", { className: "db-preview-dot" }), h("strong", { title: model.model }, model.model), h("span", { className: "db-preview-state" }, model.status === "ok" ? "正常" : model.status === "error" ? "失败" : "未知")),
-                  h("div", { className: "db-preview-metrics" }, model.availability !== undefined && h("span", null, "可用率 ", h("b", null, `${Number(model.availability).toFixed(2)}%`)), model.responseMs !== undefined && h("span", null, "响应 ", h("b", null, `${model.responseMs}ms`)), model.ttftMs !== undefined && h("span", null, "TTFT ", h("b", null, `${model.ttftMs}ms`)), model.samples > 0 && h("span", null, "样本 ", h("b", null, String(model.samples)))),
-                  h("div", { className: "db-preview-history", title: "最近健康记录" }, ...(model.history?.length ? model.history.slice(-60) : [{ status: model.status }]).map((record, index) => h("i", { key: `${model.model}-${index}`, className: record.status === "ok" ? "ok" : record.status === "error" ? "error" : "warn", title: [formatHistoryAt(record.at), record.error].filter(Boolean).join(" · ") || "健康状态记录" })))
+                  { className: `db-preview-card ${tone(model)}`, key: `${model.name}-${index}`, title: `${model.name} 最近一次检测结果` },
+                  model.group && h("div", { className: "db-preview-card-group" }, h("span", { className: "db-preview-group", title: `分组：${model.group}` }, model.group)),
+                  h("div", { className: "db-preview-card-head" }, h("span", { className: "db-preview-dot" }), h("strong", { title: model.name }, model.name), h("span", { className: "db-preview-state" }, model.status === "ok" ? "正常" : model.status === "error" ? "失败" : model.status === "warn" ? "警告" : "未知")),
+                  h("div", { className: "db-preview-metrics" }, model.availability !== undefined && h("span", null, "可用率 ", h("b", null, `${Number(model.availability).toFixed(2)}%`)), model.responseMs !== undefined && h("span", null, `${externalForm.labels?.response?.trim() || "响应"} `, h("b", null, formatMetricValue(model.responseMs, resolveDisplayUnit("response", externalForm.responseUnit), externalForm.decimals?.response))), model.ttftMs !== undefined && h("span", null, `${externalForm.labels?.ttft?.trim() || "TTFT"} `, h("b", null, formatMetricValue(model.ttftMs, resolveDisplayUnit("ttft", externalForm.ttftUnit), externalForm.decimals?.ttft))), model.history.length > 0 && h("span", null, "样本 ", h("b", null, String(model.history.length))), ...Object.entries(model.custom || {}).map(([fieldName, value]) => h("span", { key: fieldName }, fieldName, " ", h("b", null, value)))),
+                  h("div", { className: "db-preview-history", title: "最近健康记录" }, ...(model.history.length ? model.history : model.availability !== undefined ? (availabilityProgressBars(model.availability) || [{ status: model.status }]) : [{ status: model.status }]).map((record, recordIndex) => h("i", { key: `${model.name}-${recordIndex}`, className: record.status === "ok" ? "ok" : record.status === "error" ? "error" : record.status === "unknown" ? "unknown" : "warn", title: [record.note, formatHistoryAt(record.at), record.error].filter(Boolean).join(" · ") || "健康状态记录" })))
                 )
               )
             )
@@ -2370,8 +2604,74 @@ window.__ModuleLoader__.load({
           return "未知";
         };
 
+        // 复刻 host 端 normalizeExternalHealth：返回 ok / error / warn / unknown
+        const healthTone = value => {
+          const text = value === true ? "ok" : value === false ? "fail" : String(value ?? "").toLowerCase();
+          if (value === 1 || ["ok", "online", "operational", "healthy", "normal", "good", "available"].includes(text)) return "ok";
+          if (value === 0 || ["fail", "failed", "failing", "error", "down", "offline", "degraded", "bad"].includes(text)) return "error";
+          if (["warn", "warning", "partial", "idle", "pending"].includes(text)) return "warn";
+          return "unknown";
+        };
+
+        // 复刻 host 端 normalizeLatency：统一换算为毫秒并保留 3 位小数（显示层按配置格式化）
+        const clientLatencyMs = (value, unit) => {
+          const number = Number(value);
+          if (!Number.isFinite(number) || number < 0) return undefined;
+          return Math.round((unit === "s" ? number * 1000 : number) * 1000) / 1000;
+        };
+
+        // 自定义字段值转换（与 host EXTERNAL_TRANSFORMS 对齐的 client 版）
+        const clientCustomValue = (raw, transform) => {
+          if (raw === undefined || raw === null || raw === "") return undefined;
+          if (transform === "number") { const n = Number(raw); return Number.isFinite(n) ? n : String(raw); }
+          if (transform === "percent" || transform === "percent100" || transform === "percentRaw") {
+            const n = Number(raw);
+            if (!Number.isFinite(n)) return String(raw);
+            const percent = transform === "percent100" ? n * 100 : transform === "percentRaw" ? n : (n >= 0 && n <= 1 ? n * 100 : n);
+            return `${Math.max(0, Math.min(100, percent)).toFixed(2)}%`;
+          }
+          if (transform === "status") return normalizeHealthLabel(raw);
+          return String(raw);
+        };
+
+        // 解析指标显示单位：""=跟随接口单位（存储换算依据），否则用独立配置的显示单位
+        const resolveDisplayUnit = (key, dataUnit) => {
+          const configured = externalForm.displayUnit?.[key];
+          return configured === "s" || configured === "ms" ? configured : dataUnit;
+        };
+
+        // 状态转换（含自定义映射）：返回 ok / error / warn / unknown
+        // 配置了映射的源完全以映射为主：命中的用映射值，未命中的归 unknown，不回退内置词表
+        const clientStatusTone = (value, key) => {
+          const mapRows = externalForm[`${key}Map`];
+          if (Array.isArray(mapRows) && mapRows.length) {
+            const rawKey = value === null || value === undefined ? "" : String(value).trim();
+            const hit = mapRows.find(row => row.raw.trim().toLowerCase() === rawKey.toLowerCase());
+            return hit && ["ok", "error", "warn", "unknown"].includes(hit.status) ? hit.status : "unknown";
+          }
+          return healthTone(value);
+        };
+
         const handleNodeClick = (path, type) => {
           if (!bindingSlot) return;
+          // 自定义字段槽位（custom:索引）必须在最前处理：未绑模型列表时明确提示，
+          // 严禁落入下方兜底分支（会把 "custom:N" 当 externalForm 键写入脏数据）
+          if (bindingSlot.startsWith("custom:")) {
+            if (!externalForm.modelListPath) {
+              setExternalTestState("idle");
+              setExternalTestMessage("请先绑定「模型列表」，再为自定义字段选择 JSON 字段");
+              return;
+            }
+            const rest = path?.startsWith(externalForm.modelListPath) ? path.slice(externalForm.modelListPath.length).match(/^\[\d+\](.*)$/) : null;
+            if (!rest || !rest[1]) {
+              setExternalTestMessage("请选择模型项内的字段作为自定义字段");
+              return;
+            }
+            const index = Number(bindingSlot.slice(7));
+            setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, path: `$${rest[1]}` } : item));
+            setBindingSlot(null);
+            return;
+          }
           if (bindingSlot === "modelListPath") {
             const listPath = type === "array" ? path : listPathFromLeaf(path);
             if (!listPath) {
@@ -2443,51 +2743,6 @@ window.__ModuleLoader__.load({
           onNodeClick: handleNodeClick
         });
 
-        const customFieldRow = (field, index) =>
-          h(
-            "div",
-            { className: "db-map-row db-map-custom", key: `custom-${index}` },
-            h("input", {
-              className: "db-map-label-input",
-              value: field.name,
-              placeholder: "展示字段",
-              onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))
-            }),
-            h(
-              "select",
-              {
-                className: "db-select",
-                value: field.path || "",
-                onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, path: event.target.value } : item))
-              },
-              h("option", { value: "" }, "选择 JSON 字段"),
-              ...mappingOptions().map(item => h("option", { key: `${index}-${item.path}`, value: item.path }, `${item.path} · ${item.type}`))
-            ),
-            h(
-              "select",
-              {
-                className: "db-map-transform",
-                value: field.transform || "identity",
-                onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, transform: event.target.value } : item))
-              },
-              h("option", { value: "identity" }, "直接展示"),
-              h("option", { value: "number" }, "转数字"),
-              h("option", { value: "percent" }, "百分比"),
-              h("option", { value: "status" }, "状态转换")
-            ),
-            h(
-              "button",
-              {
-                className: "db-delete db-icon-button",
-                type: "button",
-                title: "删除字段",
-                "aria-label": "删除字段",
-                onClick: () => setExternalCustomFields(externalCustomFields.filter((_, itemIndex) => itemIndex !== index))
-              },
-              h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" }, h("path", { d: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" }))
-            )
-          );
-
         const jsonPreviewContent = () => {
           if (externalPreviewing) {
             return h("div", { className: "db-json-preview-loading" }, h("div", { className: "db-spinner" }));
@@ -2515,6 +2770,7 @@ window.__ModuleLoader__.load({
 
         const mappingSlotDefs = [
           { key: "model", label: "模型名称", transformable: true },
+          { key: "group", label: "分组名称" },
           { key: "status", label: "健康状态", transformable: true },
           { key: "availability", label: "可用率", transformable: true },
           { key: "ttft", label: "TTFT", transformable: true },
@@ -2527,15 +2783,28 @@ window.__ModuleLoader__.load({
 
         const applyClientTransform = (raw, transform, key) => {
           if (raw === undefined || raw === null || raw === "") return "";
-          if (transform === "percent") {
+          // 自定义映射：映射条目非空即生效（仅状态类字段有数据），未命中归"未知"、不回退内置词表
+          const mapRows = externalForm[`${key}Map`];
+          if (Array.isArray(mapRows) && mapRows.length) {
+            const rawKey = String(raw).trim();
+            const hit = mapRows.find(row => row.raw.trim().toLowerCase() === rawKey.toLowerCase());
+            if (hit && MAP_TARGET_LABELS[hit.status]) return MAP_TARGET_LABELS[hit.status];
+            return "未知";
+          }
+          if (transform === "percent" || transform === "percent100" || transform === "percentRaw") {
             const n = Number(raw);
-            return Number.isFinite(n) ? `${(n >= 0 && n <= 1 ? n * 100 : n).toFixed(2)}%` : String(raw);
+            if (!Number.isFinite(n)) return String(raw);
+            // percent=自动（0-1 ×100）、percent100=强制 ×100、percentRaw=原值即百分数
+            const percent = transform === "percent100" ? n * 100 : transform === "percentRaw" ? n : (n >= 0 && n <= 1 ? n * 100 : n);
+            return `${Math.max(0, Math.min(100, percent)).toFixed(2)}%`;
           }
           if (transform === "number") {
             const n = Number(raw);
             if (!Number.isFinite(n)) return String(raw);
-            const usesSeconds = (key === "ttft" && externalForm.ttftUnit === "s") || (key === "response" && externalForm.responseUnit === "s");
-            return `${Math.round(usesSeconds ? n * 1000 : n)}ms`;
+            // 按接口单位换算为统一 ms，再按解析后的显示单位（可独立于接口单位）格式化
+            const isTtft = key === "ttft";
+            const dataUnit = (isTtft && externalForm.ttftUnit === "s") || (key === "response" && externalForm.responseUnit === "s") ? "s" : "ms";
+            return formatMetricValue(dataUnit === "s" ? n * 1000 : n, resolveDisplayUnit(key, dataUnit), isTtft ? externalForm.decimals?.ttft : externalForm.decimals?.response);
           }
           if (transform === "status") return normalizeHealthLabel(raw);
           return String(raw);
@@ -2561,11 +2830,75 @@ window.__ModuleLoader__.load({
             return h(tag, {
               className: `db-bind-target${active ? " active" : ""}${bound ? "" : " empty"}${extraClass}`,
               title: bound ? `${label} ← ${externalForm[key]}` : `点击后选择左侧 JSON 字段绑定${label}`,
-              onClick: () => setBindingSlot(active ? null : key)
+              onClick: () => {
+                setActiveSlotKey(key);
+                setBindingSlot(active ? null : key);
+              }
             }, content);
           };
-          const activeDef = bindingSlot === "modelListPath" ? { key: "modelListPath", label: "模型列表", array: true } : mappingSlotDefs.find(slot => slot.key === bindingSlot);
-          const activeBound = activeDef ? Boolean(externalForm[activeDef.key]) : false;
+          // 当前槽位定义基于 activeSlotKey（选中态），而非 bindingSlot（绑定中，完成即清空）
+          // custom:N 为自定义字段槽位：绑定/转换写入 externalCustomFields 对应项
+          const customSlotIndex = typeof activeSlotKey === "string" && activeSlotKey.startsWith("custom:") ? Number(activeSlotKey.slice(7)) : -1;
+          const activeDef = activeSlotKey === "modelListPath"
+            ? { key: "modelListPath", label: "模型列表", array: true }
+            : customSlotIndex >= 0
+              ? { key: activeSlotKey, label: "自定义字段", transformable: true, custom: true }
+              : mappingSlotDefs.find(slot => slot.key === activeSlotKey);
+          const activeTransformValue = activeDef?.custom
+            ? externalCustomFields[customSlotIndex]?.transform || "identity"
+            : activeDef
+              ? (externalForm[`${activeDef.key}Transform`] || "identity")
+              : undefined;
+          const activeBound = activeDef ? (activeDef.custom ? Boolean(externalCustomFields[customSlotIndex]?.path) : Boolean(externalForm[activeDef.key])) : false;
+          // 转换附加配置（第二行）：数字转换的接口单位/显示单位/小数位、百分比转换的倍率
+          const updateTransform = value => {
+            if (activeDef?.custom) {
+              setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === customSlotIndex ? { ...item, transform: value } : item));
+            } else if (activeDef) {
+              updateExternalForm({ ...externalForm, [`${activeDef.key}Transform`]: value }, true);
+            }
+          };
+          const extraOptions = [];
+          if (activeDef?.transformable && activeBound) {
+            if ((activeDef.key === "ttft" || activeDef.key === "response") && activeTransformValue === "number") {
+              extraOptions.push(
+                h("select", {
+                  key: "unit",
+                  className: "db-bind-metric-opt",
+                  value: externalForm[activeDef.key === "ttft" ? "ttftUnit" : "responseUnit"] === "s" ? "s" : "ms",
+                  title: "接口返回数值的单位（决定存储换算）",
+                  onChange: event => updateExternalForm({ ...externalForm, [activeDef.key === "ttft" ? "ttftUnit" : "responseUnit"]: event.target.value }, true)
+                }, h("option", { value: "ms" }, "接口 ms"), h("option", { value: "s" }, "接口 s")),
+                h("select", {
+                  key: "display-unit",
+                  className: "db-bind-metric-opt",
+                  value: externalForm.displayUnit?.[activeDef.key] === "s" || externalForm.displayUnit?.[activeDef.key] === "ms" ? externalForm.displayUnit[activeDef.key] : "",
+                  title: "卡片上展示的单位",
+                  onChange: event => updateExternalForm({ ...externalForm, displayUnit: { ...externalForm.displayUnit, [activeDef.key]: event.target.value } }, true)
+                }, h("option", { value: "" }, "显示跟随"), h("option", { value: "ms" }, "显示 ms"), h("option", { value: "s" }, "显示 s")),
+                h("select", {
+                  key: "decimals",
+                  className: "db-bind-metric-opt",
+                  value: String(Number(externalForm.decimals?.[activeDef.key]) || 0),
+                  title: "保留小数位数",
+                  onChange: event => updateExternalForm({ ...externalForm, decimals: { ...externalForm.decimals, [activeDef.key]: Number(event.target.value) } }, true)
+                }, h("option", { value: "0" }, "整数"), h("option", { value: "1" }, "1 位"), h("option", { value: "2" }, "2 位"))
+              );
+            }
+            if (activeDef.key !== "availability" && ["percent", "percent100", "percentRaw"].includes(activeTransformValue)) {
+              extraOptions.push(
+                h("span", { key: "percent-label", className: "db-bind-extra-label" }, "百分比倍率"),
+                h("select", {
+                  key: "percent-mode",
+                  className: "db-bind-metric-opt",
+                  value: activeTransformValue,
+                  title: "百分比倍率：自动=0-1 视为小数并 ×100；×100=强制乘 100；原值加%=返回值就是百分数",
+                  onChange: event => updateTransform(event.target.value)
+                }, h("option", { value: "percent" }, "自动"), h("option", { value: "percent100" }, "×100"), h("option", { value: "percentRaw" }, "原值加%"))
+              );
+            }
+          }
+          const isBinding = Boolean(bindingSlot) && (bindingSlot === activeSlotKey || bindingSlot === "modelListPath");
           const rawHistory = sample && externalForm.history ? readPreviewPath(sample, externalForm.history) : null;
           const historyRecords = Array.isArray(rawHistory) ? rawHistory.slice(-60) : [];
           const historyStatusMatched = Boolean(externalForm.historyStatus) && historyRecords.some(record => readPreviewPath(record, externalForm.historyStatus) !== undefined);
@@ -2581,7 +2914,14 @@ window.__ModuleLoader__.load({
               error: externalForm.historyError ? readPreviewPath(record, externalForm.historyError) : undefined
             };
           });
-          const historyBars = history.length ? history : Array.from({ length: 30 }, () => ({ tone: "", at: undefined, error: undefined }));
+          // 未绑定历史记录时：绑定可用率则按可用率百分比生成近似进度条，否则显示空格子
+          const sampleAvailabilityRaw = sample && externalForm.availability ? readPreviewPath(sample, externalForm.availability) : undefined;
+          const sampleAvailability = sampleAvailabilityRaw === undefined || sampleAvailabilityRaw === null || sampleAvailabilityRaw === "" ? NaN : Number(sampleAvailabilityRaw);
+          const historyBars = history.length
+            ? history
+            : Number.isFinite(sampleAvailability)
+              ? (availabilityProgressBars(sampleAvailability, 30) || []).map(bar => ({ tone: bar.status, note: bar.note }))
+              : Array.from({ length: 30 }, () => ({ tone: "", at: undefined, error: undefined }));
           return h(
             "div",
             { className: `db-preview-card${tone.trim() ? ` ${tone.trim()}` : ""} db-bind-card` },
@@ -2592,6 +2932,7 @@ window.__ModuleLoader__.load({
             ),
             h("div", { className: "db-bind-dashboard-head" },
               h("div", { className: "db-bind-model-copy" },
+                bindTarget("group", "分组名称", externalForm.group ? (slotDisplay("group").text || "待预览") : "分组", " db-bind-group"),
                 bindTarget("model", "模型名称", slotDisplay("model").text || (externalForm.model ? "待预览" : "绑定模型名称"), " db-bind-model", "strong"),
                 h("span", { className: "db-bind-model-meta" }, externalForm.model || "点击模型名称后，在左侧选择字段")
               ),
@@ -2603,20 +2944,83 @@ window.__ModuleLoader__.load({
             h("div", { className: "db-bind-metric-grid" },
               bindTarget("ttft", "TTFT", h("span", { className: "db-bind-metric-card" },
                 h("span", { className: "db-bind-metric-label" },
-                  h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.7", "aria-hidden": "true" }, h("path", { d: "M13 2L4 14h7l-1 8 9-12h-7z" })),
-                  h("span", null, "对话延迟"),
+                  h("input", {
+                    className: "db-bind-metric-name",
+                    type: "text",
+                    value: externalForm.labels?.ttft || "",
+                    placeholder: "对话延迟",
+                    title: "自定义指标名称，留空使用默认",
+                    maxLength: 20,
+                    // 阻止冒泡：点击输入框编辑文案时不应触发外层槽位的绑定模式
+                    onClick: event => event.stopPropagation(),
+                    onChange: event => setExternalForm({ ...externalForm, labels: { ...externalForm.labels, ttft: event.target.value } })
+                  }),
                   h("span", { className: "db-bind-field-path" }, externalForm.ttft || "点击绑定")
                 ),
                 h("span", { className: "db-bind-metric-value" }, slotDisplay("ttft").text || "—")
               )),
               bindTarget("response", "响应耗时", h("span", { className: "db-bind-metric-card" },
                 h("span", { className: "db-bind-metric-label" },
-                  h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.7", "aria-hidden": "true" }, h("circle", { cx: "12", cy: "12", r: "9" }), h("path", { d: "M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9S14.5 18.4 12 21M12 3C9.5 5.6 8.2 8.6 8.2 12S9.5 18.4 12 21" })),
-                  h("span", null, "端点响应"),
+                  h("input", {
+                    className: "db-bind-metric-name",
+                    type: "text",
+                    value: externalForm.labels?.response || "",
+                    placeholder: "端点响应",
+                    title: "自定义指标名称，留空使用默认",
+                    maxLength: 20,
+                    onClick: event => event.stopPropagation(),
+                    onChange: event => setExternalForm({ ...externalForm, labels: { ...externalForm.labels, response: event.target.value } })
+                  }),
                   h("span", { className: "db-bind-field-path" }, externalForm.response || "点击绑定")
                 ),
                 h("span", { className: "db-bind-metric-value" }, slotDisplay("response").text || "—")
-              ))
+              )),
+              // 自定义字段占位卡（与指标卡同款），最后是「＋」新增按钮
+              ...externalCustomFields.map((field, index) => {
+                const slotKey = `custom:${index}`;
+                const bound = Boolean(field.path);
+                const value = bound ? clientCustomValue(readPreviewPath(sample, field.path), field.transform) : undefined;
+                return h("span", {
+                  key: slotKey,
+                  className: `db-bind-target${bindingSlot === slotKey ? " active" : ""}${bound ? "" : " empty"}`,
+                  title: bound ? `自定义字段「${field.name || "未命名"}」 ← ${field.path}` : "点击后选择左侧 JSON 字段绑定自定义字段",
+                  onClick: () => {
+                    setActiveSlotKey(slotKey);
+                    setBindingSlot(bindingSlot === slotKey ? null : slotKey);
+                  }
+                }, h("span", { className: "db-bind-metric-card" },
+                  h("span", { className: "db-bind-metric-label" },
+                    h("input", {
+                      className: "db-bind-metric-name",
+                      type: "text",
+                      value: field.name,
+                      placeholder: "自定义字段",
+                      title: "字段显示名称（标签）",
+                      maxLength: 20,
+                      onClick: event => event.stopPropagation(),
+                      onChange: event => setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))
+                    }),
+                    h("span", { className: "db-bind-field-path" }, field.path || "点击绑定")
+                  ),
+                  h("span", { className: "db-bind-metric-value" }, value === undefined || value === "" ? "—" : String(value)),
+                  h("button", { className: "db-bind-action-btn", type: "button", title: "删除该字段", onClick: event => {
+                    event.stopPropagation();
+                    setExternalCustomFields(externalCustomFields.filter((_, itemIndex) => itemIndex !== index));
+                    // custom:N 用数组下标做槽位标识，删除任意一项都会使后续索引移位，
+                    // 必须无条件清空选中/绑定态，避免后续操作写入错误的字段
+                    if ((typeof activeSlotKey === "string" && activeSlotKey.startsWith("custom:")) || (typeof bindingSlot === "string" && bindingSlot.startsWith("custom:"))) {
+                      setActiveSlotKey(null);
+                      setBindingSlot(null);
+                    }
+                  } }, "删除")
+                ));
+              }),
+              h("button", { className: "db-bind-add-field", type: "button", title: "新增自定义字段", onClick: () => {
+                const slotKey = `custom:${externalCustomFields.length}`;
+                setExternalCustomFields([...externalCustomFields, { name: "", path: "", transform: "identity" }]);
+                setActiveSlotKey(slotKey);
+                setBindingSlot(slotKey);
+              } }, "＋")
             ),
             bindTarget("availability", "可用率", h("span", { className: "db-bind-availability" },
               h("span", { className: "db-bind-availability-copy" },
@@ -2646,21 +3050,35 @@ window.__ModuleLoader__.load({
             bindTarget("historyStatus", "历史状态", h("span", { className: "db-bind-history-bars" }, ...historyBars.map((record, index) => h("i", {
               key: index,
               className: record.tone,
-              title: [record.at !== undefined && `时间：${formatHistoryAt(record.at)}`, record.error && `错误：${record.error}`].filter(Boolean).join("\n") || "历史状态记录"
+              title: [record.note, record.at !== undefined && `时间：${formatHistoryAt(record.at)}`, record.error && `错误：${record.error}`].filter(Boolean).join("\n") || "历史状态记录"
             }))), " db-bind-history-target"),
             h("div", { className: "db-bind-history-axis" }, h("span", null, "PAST"), h("span", null, "NOW")),
             h("div", { className: "db-bind-card-foot" },
               activeDef ? [
-                h("span", { key: "hint" }, `正在绑定「${activeDef.label}」— 点击左侧 JSON ${activeDef.array ? "中的数组节点" : "中的字段"}完成绑定`),
+                isBinding
+                  ? h("span", { key: "hint" }, `正在绑定「${activeDef.label}」— 点击左侧 JSON ${activeDef.array ? "中的数组节点" : "中的字段"}完成绑定`)
+                  : activeBound
+                    ? h("span", { key: "hint" }, `「${activeDef.label}」已绑定 ${activeDef.custom ? externalCustomFields[customSlotIndex]?.path : externalForm[activeDef.key]}`)
+                    : h("span", { key: "hint" }, `点击卡片上的「${activeDef.label}」槽位，再点左侧 JSON ${activeDef.array ? "中的数组节点" : "中的字段"}完成绑定`),
                 activeDef.transformable && activeBound && h("div", { key: "actions", className: "db-bind-actions" },
-                  ...TRANSFORM_OPTIONS.map(([value, label]) => h("button", {
+                  ...(activeDef.key === "availability" ? [["percent", "百分比"], ["percent100", "百分比×100"], ["percentRaw", "原值+%"]] : TRANSFORM_OPTIONS).map(([value, label]) => h("button", {
                     key: value,
-                    className: `db-bind-action-btn${(externalForm[`${activeDef.key}Transform`] || "identity") === value ? " on" : ""}`,
+                    // 百分比按钮在三种变体（percent/percent100/percentRaw）下都高亮
+                    className: `db-bind-action-btn${activeTransformValue === value || (value === "percent" && ["percent100", "percentRaw"].includes(activeTransformValue)) ? " on" : ""}`,
                     type: "button",
-                    onClick: () => updateExternalForm({ ...externalForm, [`${activeDef.key}Transform`]: value }, true)
-                  }, label))
+                    onClick: () => updateTransform(value)
+                  }, label)),
+                  activeDef.key === "status" && h("button", {
+                    key: "map",
+                    className: `db-bind-action-btn${(externalForm.statusMap || []).length ? " on" : ""}`,
+                    type: "button",
+                    title: "接口返回值不是标准状态词时，用映射表转换为健康状态",
+                    onClick: () => setExternalMapOpen(value => !value)
+                  }, "值映射")
                 ),
-                activeBound && h("button", { key: "clear", className: "db-bind-action-btn", type: "button", onClick: () => updateExternalForm({ ...externalForm, [activeDef.key]: "" }, true) }, "清除绑定")
+                // 第二行：转换附加配置（数字的单位/小数位、百分比的倍率）
+                activeDef.transformable && activeBound && extraOptions.length > 0 && h("div", { key: "extra", className: "db-bind-extra-opts" }, ...extraOptions),
+                activeBound && h("button", { key: "clear", className: "db-bind-action-btn", type: "button", onClick: () => (activeDef.custom ? setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === customSlotIndex ? { ...item, path: "" } : item)) : updateExternalForm({ ...externalForm, [activeDef.key]: "" }, true)) }, "清除绑定")
               ] : Array.isArray(list)
                 ? "点击卡片上的虚线槽位，再点左侧 JSON 中的字段完成绑定，卡片实时预览。"
                 : "先点击「模型列表」槽位并在左侧选择一个数组节点，卡片即可实时预览。"
@@ -2679,7 +3097,7 @@ window.__ModuleLoader__.load({
             ),
             h(
               "form",
-              { className: "db-form", onSubmit: saveExternal },
+              { className: "db-form", id: "db-external-form", onSubmit: saveExternal },
               h(
                 "label",
                 { className: "db-monitor-toggle" },
@@ -2728,7 +3146,7 @@ window.__ModuleLoader__.load({
                   h("div", { className: "db-json-preview-title" }, h("label", null, "返回 JSON 预览")),
                   h("div", { className: "db-json-preview-title" },
                     h("label", null, "返回状态预览"),
-                    externalPreviewStatus && h("button", { className: "db-quiet db-preview-all-toggle", type: "button", onClick: () => setExternalShowAllPreview(value => !value) }, externalShowAllPreview ? "收起全部状态" : "预览全部模型")
+                    previewReady && h("button", { className: "db-quiet db-preview-all-toggle", type: "button", onClick: () => setExternalShowAllPreview(value => !value) }, externalShowAllPreview ? "收起全部状态" : "预览全部模型")
                   )
                 ),
                 h(
@@ -2738,15 +3156,10 @@ window.__ModuleLoader__.load({
                   mappingPreviewCard()
                 )
               ),
-              externalShowAllPreview && externalPreviewStatus && previewStatusCards(externalPreviewStatus),
+              externalMapOpen && statusMapSection(),
+              externalShowAllPreview && previewStatusCards(),
               externalField("intervalSeconds", "刷新间隔（秒）", "number"),
-              externalField("timeoutSeconds", "请求超时（秒）", "number"),
-              h(
-                "div",
-                { className: "db-form-actions" },
-                h("button", { className: "db-quiet", type: "button", onClick: () => { externalPreviewLoadGeneration.current += 1; setExternalEditing(null); } }, "取消"),
-                h("button", { className: "db-primary", type: "submit" }, "保存监测源")
-              )
+              externalField("timeoutSeconds", "请求超时（秒）", "number")
             )
           );
 
@@ -2761,17 +3174,20 @@ window.__ModuleLoader__.load({
           else {
             setExternalForm({ ...blankExternalForm, id: `source-${Date.now().toString(36)}`, providerId: provider?.id || "" });
             setExternalCustomFields([]);
-            setExternalFieldEnabled({ model: true, status: true, availability: true, ttft: true, response: true, history: true, historyAt: true, historyStatus: true, historyError: true, error: true });
+            setExternalFieldEnabled({ model: true, group: true, status: true, availability: true, ttft: true, response: true, history: true, historyAt: true, historyStatus: true, historyError: true, error: true });
             setBindingSlot(null);
+            setActiveSlotKey(null);
             setExternalShowAllPreview(false);
+            setExternalMapOpen(false);
             externalPreviewLoadGeneration.current += 1;
             setExternalEditing("__new");
             setExternalPreview(null);
-            setExternalPreviewStatus(null);
           }
           setAdvancedTab("models");
           setExternalTestState("idle");
           setExternalTestMessage("");
+          // 弹窗每次打开都刷新模型目录，模型页新增/删除的模型在此同步可见。
+          setLlmRefreshKey(key => key + 1);
           setAdvancedOpen(true);
         };
 
@@ -2813,9 +3229,18 @@ window.__ModuleLoader__.load({
                 "div",
                 { className: "db-modal-content" },
                 advancedTab === "models"
-                  ? h(ModelSettingsTab, { provider: advancedProvider, modelProviders, boundRoute })
+                  ? h(ModelSettingsTab, { provider: advancedProvider, modelProviders, boundRoute, refreshKey: llmRefreshKey })
                   : (externalEditing && externalEditor())
-              )
+              ),
+              advancedTab === "health" &&
+                externalEditing &&
+                h(
+                  "div",
+                  { className: "db-modal-footer" },
+                  externalSaveMessage && h("p", { className: "db-save-message", role: "alert" }, externalSaveMessage),
+                  h("button", { className: "db-quiet", type: "button", onClick: () => { externalPreviewLoadGeneration.current += 1; setAdvancedOpen(false); setExternalEditing(null); setExternalSaveMessage(""); } }, "取消"),
+                  h("button", { className: "db-primary", type: "submit", form: "db-external-form" }, "保存监测源")
+                )
             )
           );
 
@@ -2842,8 +3267,17 @@ window.__ModuleLoader__.load({
               "div",
               { className: "db-row-line" },
               h("span", { className: "db-provider-name" }, mp?.name || provider.name),
-              h("span", { className: provider.balanceEnabled === false ? "db-live disabled" : statuses[provider.id] && statuses[provider.id].status !== "ok" ? "db-live error" : "db-live" }),
-              h("span", { className: "db-tag" }, provider.balanceEnabled === false ? "余额监测已关闭" : "已开启查询"),
+              h(
+                "select",
+                {
+                  className: "db-select db-query-select",
+                  value: provider.balanceEnabled === false ? "off" : "on",
+                  title: "余额查询开关",
+                  onChange: event => toggleBalanceEnabled(provider, event.target.value === "on")
+                },
+                h("option", { value: "on" }, "开启余额查询"),
+                h("option", { value: "off" }, "关闭余额查询")
+              ),
               OFFICIAL_PRESETS.has(provider.preset) && h("span", { className: "db-tag" }, "官方内置"),
               h("div", { className: "db-spacer" }),
               h("button", { className: "db-quiet", type: "button", onClick: () => openAdvanced("__new", provider), title: "打开高级设置" }, "高级设置"),
@@ -2961,12 +3395,13 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "db-bottom-settings" },
-            h("span", null, "默认供应商"),
+            h("span", { className: "db-setting-label" }, "默认供应商"),
             h(
               "select",
               {
                 className: "db-select",
-                value: config.defaultProviderId || "",
+                value: config.defaultProviderId || configuredProviders[0]?.id || "",
+                disabled: configuredProviders.length === 0,
                 onChange: async event => {
                   const defaultProviderId = event.target.value || null;
                   try {
@@ -2978,10 +3413,9 @@ window.__ModuleLoader__.load({
                   }
                 }
               },
-              h("option", { value: "" }, "自动选择第一个供应商"),
               configuredProviders.map(provider => h("option", { key: provider.id, value: provider.id }, provider.name))
             ),
-            h("span", null, "状态栏"),
+            h("span", { className: "db-setting-label" }, "状态栏"),
             h(
               "button",
               {
@@ -3000,36 +3434,39 @@ window.__ModuleLoader__.load({
               },
               h("i")
             ),
-            h("div", { className: "db-spacer" }),
             h(
               "div",
-              { className: "db-import-wrap" },
+              { className: "db-bottom-actions" },
+              h(
+                "div",
+                { className: "db-import-wrap" },
+                h(
+                  "button",
+                  {
+                    className: "db-quiet",
+                    type: "button",
+                    "aria-expanded": importMenuOpen,
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      setImportMenuOpen(!importMenuOpen);
+                    }
+                  },
+                  "+ 引入供应商 ▾"
+                ),
+                importMenu
+              ),
               h(
                 "button",
                 {
                   className: "db-quiet",
                   type: "button",
-                  "aria-expanded": importMenuOpen,
-                  onClick: (e) => {
-                    e.stopPropagation();
-                    setImportMenuOpen(!importMenuOpen);
+                  onClick: () => {
+                    loadSummary();
+                    refreshBar();
                   }
                 },
-                "+ 引入供应商 ▾"
-              ),
-              importMenu
-            ),
-            h(
-              "button",
-              {
-                className: "db-quiet",
-                type: "button",
-                onClick: () => {
-                  loadSummary();
-                  refreshBar();
-                }
-              },
-              "刷新"
+                "刷新"
+              )
             )
           ),
           message && h("p", { className: `db-message${messageKind === "error" ? " error" : messageKind === "warn" ? " warn" : ""}`, role: "status" }, message)
