@@ -8,7 +8,7 @@
 [![npm version](https://img.shields.io/npm/v/dsh-balance-quota?style=flat-square&color=4c8bf5)](https://www.npmjs.com/package/dsh-balance-quota)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg?style=flat-square)](https://nodejs.org)
-[![Platform](https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey.svg?style=flat-square)](https://github.com/kongshan-zhuyu/dsh-balance-plugin)
+[![Platform](https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey.svg?style=flat-square)](https://github.com/kongshan-zhuyu/dsh-balance-quota)
 
 **English** · [简体中文](./README.zh-CN.md)
 
@@ -16,10 +16,11 @@
 
 ---
 
-`dsh-balance-quota` grounds your AI provider balance and quota into the DSH Web chat
-composer, so you never burn through a quota mid-conversation again. It ships as a
-single installable package that converges the Host query, the Web status bar, the
-settings page, and the release bundle.
+`dsh-balance-quota` brings provider balance, quota, and external model health into
+DSH Web. The current development version is **0.3.3**; the previous npm release was
+**0.3.2**. Version 0.3.3 adds visual JSON field binding, custom-field transforms, and
+per-number input unit, display unit, and decimal precision. It ships as one installable
+package containing the Host query service, Web status bar, settings UI, and release bundle.
 
 > **🎯 What it does** — Shows a live balance/quota strip in the composer, with
 > per-conversation provider memory and a one-click switch menu.
@@ -153,7 +154,18 @@ response, custom request headers, timeout, cache interval, and amount conversion
 
 ## 📡 External model status
 
-The supplier settings card includes a “Supplier health monitoring” section that accepts user-configured **public HTTPS + GET + JSON** status APIs. Enter an API URL and JSON-path mappings; the Host fetches and normalizes model status, availability, TTFT, response time, and history.
+The provider's **Advanced settings → Health monitoring** section accepts public
+**HTTPS + GET + JSON** status APIs. Test/parse the endpoint, select the model-list array
+in the left JSON tree, then bind model name, status, availability, TTFT, response time,
+history, and custom fields. Number-type custom fields have independent input units
+(ms/s), display units (follow/ms/s), and 0–2 decimal places.
+
+![Test a health endpoint and inspect JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
+
+![Bind health fields and choose transforms](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
+
+See the [npm package guide](./packages/dsh-balance/README.md) for the complete walkthrough,
+field table, conversion examples, and troubleshooting.
 
 This feature only reads third-party monitoring data. It does not call your model APIs, store model credentials, or consume model quota. The result represents the external monitor, not your current account health.
 

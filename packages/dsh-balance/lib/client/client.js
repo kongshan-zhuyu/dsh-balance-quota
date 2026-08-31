@@ -2180,10 +2180,14 @@ window.__ModuleLoader__.load({
               response: String(externalForm.labels?.response || "").trim().slice(0, 20) || undefined
             },
             customFields: externalCustomFields
+              .map(field => ({ ...field, name: String(field.name || "").trim(), path: String(field.path || "").trim() }))
               .filter(field => field.name && field.path)
               .map(field => ({
                 name: field.name,
                 path: field.path,
+                unit: field.transform === "number" && field.unit === "s" ? "s" : "ms",
+                displayUnit: field.transform === "number" && (field.displayUnit === "s" || field.displayUnit === "ms") ? field.displayUnit : "",
+                decimals: field.transform === "number" ? Math.max(0, Math.min(2, Math.round(Number(field.decimals) || 0))) : 0,
                 // 白名单需与 host validate 一致（含百分比三变体），否则新变体保存时会被降级为 identity
                 transform: ["identity", "number", "percent", "percent100", "percentRaw", "status"].includes(field.transform) ? field.transform : "identity"
               })),
@@ -2414,7 +2418,7 @@ window.__ModuleLoader__.load({
             previewKeys: restoredPreview?.keys
           });
           setExternalPreview(restoredPreview);
-          setExternalCustomFields((saved.customFields || []).map(field => ({ ...field })));
+          setExternalCustomFields((saved.customFields || []).map(field => ({ ...field, unit: field.unit === "s" ? "s" : "ms", displayUnit: field.displayUnit === "s" || field.displayUnit === "ms" ? field.displayUnit : "", decimals: Number(field.decimals) || 0 })));
           setExternalFieldEnabled({
             model: true,
             group: true,
@@ -2544,7 +2548,7 @@ window.__ModuleLoader__.load({
             const ttftMs = rawTtft === undefined ? undefined : clientLatencyMs(rawTtft, externalForm.ttftUnit);
             // 自定义字段：按绑定路径读取样本值并应用字段转换，空值不显示
             const custom = Object.fromEntries(customEntries.map(field => {
-              const value = clientCustomValue(readPreviewPath(item, field.path), field.transform);
+              const value = clientCustomValue(readPreviewPath(item, field.path), field.transform, field);
               return [field.name, value === undefined ? "" : String(value)];
             }).filter(([, value]) => value !== ""));
             return { name: String(name).slice(0, 160), group, status, availability, responseMs, ttftMs, history, custom };
@@ -2621,9 +2625,15 @@ window.__ModuleLoader__.load({
         };
 
         // 自定义字段值转换（与 host EXTERNAL_TRANSFORMS 对齐的 client 版）
-        const clientCustomValue = (raw, transform) => {
+        const clientCustomValue = (raw, transform, field) => {
           if (raw === undefined || raw === null || raw === "") return undefined;
-          if (transform === "number") { const n = Number(raw); return Number.isFinite(n) ? n : String(raw); }
+          if (transform === "number") {
+               const n = Number(raw);
+               if (!Number.isFinite(n)) return String(raw);
+               const unit = field?.unit === "s" ? "s" : "ms";
+               const displayUnit = field?.displayUnit === "s" || field?.displayUnit === "ms" ? field.displayUnit : unit;
+               return formatMetricValue(unit === "s" ? n * 1000 : n, displayUnit, field?.decimals);
+             }
           if (transform === "percent" || transform === "percent100" || transform === "percentRaw") {
             const n = Number(raw);
             if (!Number.isFinite(n)) return String(raw);
@@ -2859,29 +2869,30 @@ window.__ModuleLoader__.load({
             }
           };
           const extraOptions = [];
+           const activeCustomField = activeDef?.custom ? externalCustomFields[customSlotIndex] : null;
           if (activeDef?.transformable && activeBound) {
-            if ((activeDef.key === "ttft" || activeDef.key === "response") && activeTransformValue === "number") {
+            if ((activeDef.key === "ttft" || activeDef.key === "response" || activeDef.custom) && activeTransformValue === "number") {
               extraOptions.push(
                 h("select", {
                   key: "unit",
                   className: "db-bind-metric-opt",
-                  value: externalForm[activeDef.key === "ttft" ? "ttftUnit" : "responseUnit"] === "s" ? "s" : "ms",
+                  value: activeDef.custom ? (activeCustomField?.unit === "s" ? "s" : "ms") : (externalForm[activeDef.key === "ttft" ? "ttftUnit" : "responseUnit"] === "s" ? "s" : "ms"),
                   title: "接口返回数值的单位（决定存储换算）",
-                  onChange: event => updateExternalForm({ ...externalForm, [activeDef.key === "ttft" ? "ttftUnit" : "responseUnit"]: event.target.value }, true)
+                  onChange: event => activeDef.custom ? setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === customSlotIndex ? { ...item, unit: event.target.value } : item)) : updateExternalForm({ ...externalForm, [activeDef.key === "ttft" ? "ttftUnit" : "responseUnit"]: event.target.value }, true)
                 }, h("option", { value: "ms" }, "接口 ms"), h("option", { value: "s" }, "接口 s")),
                 h("select", {
                   key: "display-unit",
                   className: "db-bind-metric-opt",
-                  value: externalForm.displayUnit?.[activeDef.key] === "s" || externalForm.displayUnit?.[activeDef.key] === "ms" ? externalForm.displayUnit[activeDef.key] : "",
+                  value: activeDef.custom ? (activeCustomField?.displayUnit === "s" || activeCustomField?.displayUnit === "ms" ? activeCustomField.displayUnit : "") : (externalForm.displayUnit?.[activeDef.key] === "s" || externalForm.displayUnit?.[activeDef.key] === "ms" ? externalForm.displayUnit[activeDef.key] : ""),
                   title: "卡片上展示的单位",
-                  onChange: event => updateExternalForm({ ...externalForm, displayUnit: { ...externalForm.displayUnit, [activeDef.key]: event.target.value } }, true)
+                  onChange: event => activeDef.custom ? setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === customSlotIndex ? { ...item, displayUnit: event.target.value } : item)) : updateExternalForm({ ...externalForm, displayUnit: { ...externalForm.displayUnit, [activeDef.key]: event.target.value } }, true)
                 }, h("option", { value: "" }, "显示跟随"), h("option", { value: "ms" }, "显示 ms"), h("option", { value: "s" }, "显示 s")),
                 h("select", {
                   key: "decimals",
                   className: "db-bind-metric-opt",
-                  value: String(Number(externalForm.decimals?.[activeDef.key]) || 0),
+                  value: String(activeDef.custom ? Number(activeCustomField?.decimals) || 0 : Number(externalForm.decimals?.[activeDef.key]) || 0),
                   title: "保留小数位数",
-                  onChange: event => updateExternalForm({ ...externalForm, decimals: { ...externalForm.decimals, [activeDef.key]: Number(event.target.value) } }, true)
+                  onChange: event => activeDef.custom ? setExternalCustomFields(externalCustomFields.map((item, itemIndex) => itemIndex === customSlotIndex ? { ...item, decimals: Number(event.target.value) } : item)) : updateExternalForm({ ...externalForm, decimals: { ...externalForm.decimals, [activeDef.key]: Number(event.target.value) } }, true)
                 }, h("option", { value: "0" }, "整数"), h("option", { value: "1" }, "1 位"), h("option", { value: "2" }, "2 位"))
               );
             }
@@ -3017,7 +3028,7 @@ window.__ModuleLoader__.load({
               }),
               h("button", { className: "db-bind-add-field", type: "button", title: "新增自定义字段", onClick: () => {
                 const slotKey = `custom:${externalCustomFields.length}`;
-                setExternalCustomFields([...externalCustomFields, { name: "", path: "", transform: "identity" }]);
+                setExternalCustomFields([...externalCustomFields, { name: "", path: "", transform: "identity", unit: "ms", displayUnit: "", decimals: 0 }]);
                 setActiveSlotKey(slotKey);
                 setBindingSlot(slotKey);
               } }, "＋")

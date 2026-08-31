@@ -1,7 +1,7 @@
 {
   "name": "dsh-balance-quota",
-  "version": "0.3.2",
-  "description": "DeepSeek Harness plugin for secure provider balance and quota display",
+  "version": "0.3.3",
+  "description": "DeepSeek Harness Web plugin for secure provider balance, quota, and model health monitoring",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -16,6 +16,7 @@
     "LICENSE",
     "SECURITY.md",
     "CHANGELOG.md",
+    "docs",
     "package.json"
   ],
   "keywords": [
@@ -24,18 +25,20 @@
     "plugin",
     "balance",
     "quota",
-    "provider"
+    "provider",
+    "health-monitoring",
+    "status"
   ],
   "license": "MIT",
   "author": "kongshan-zhuyu",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kongshan-zhuyu/dsh-balance-plugin.git"
+    "url": "git+https://github.com/kongshan-zhuyu/dsh-balance-quota.git"
   },
   "bugs": {
-    "url": "https://github.com/kongshan-zhuyu/dsh-balance-plugin/issues"
+    "url": "https://github.com/kongshan-zhuyu/dsh-balance-quota/issues"
   },
-  "homepage": "https://github.com/kongshan-zhuyu/dsh-balance-plugin#readme",
+  "homepage": "https://github.com/kongshan-zhuyu/dsh-balance-quota#readme",
   "engines": {
     "node": ">=22"
   },

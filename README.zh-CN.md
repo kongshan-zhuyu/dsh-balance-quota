@@ -8,7 +8,7 @@ Web 界面提供安全可靠的余额与额度状态栏。
 [![npm version](https://img.shields.io/npm/v/dsh-balance-quota?style=flat-square&color=4c8bf5)](https://www.npmjs.com/package/dsh-balance-quota)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg?style=flat-square)](https://nodejs.org)
-[![Platform](https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey.svg?style=flat-square)](https://github.com/kongshan-zhuyu/dsh-balance-plugin)
+[![Platform](https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey.svg?style=flat-square)](https://github.com/kongshan-zhuyu/dsh-balance-quota)
 
 [English](./README.md) · **简体中文**
 
@@ -16,9 +16,10 @@ Web 界面提供安全可靠的余额与额度状态栏。
 
 ---
 
-`dsh-balance-quota` 把模型供应商的余额与额度直接带到 DSH Web 对话输入框下方的状态栏，
-让你在对话中途不再担心额度悄悄耗尽。它以单个可安装包的形式，把 Host 查询、
-Web 状态栏、设置页与发布 Bundle 收敛为一体。
+`dsh-balance-quota` 把模型供应商的余额、额度与外部健康状态直接带到 DSH Web。
+当前开发版本为 **0.3.3**，上一版 npm 发布版本为 **0.3.2**。0.3.3 新增可视化 JSON
+字段绑定、自定义字段转换，以及数字字段的接口单位、显示单位与小数位配置。它以单个
+可安装包的形式，把 Host 查询、Web 状态栏、设置页与发布 Bundle 收敛为一体。
 
 > **🎯 它的作用** — 在输入框下方展示实时余额/额度条，支持逐会话记忆与一键切换菜单。
 > **🧩 兼容性** — DSH Web，Node.js 22+；内置 DeepSeek 与 OpenCode Go 官方方案，
@@ -137,7 +138,13 @@ JSON 属性路径、固定 ISO 4217 币种或从响应读取、自定义请求�
 
 ## 📡 外部模型状态
 
-供应商右侧的「高级设置」支持按监测源 Tab 接入任意**公网 HTTPS + GET + JSON** 状态接口。每个监测源独立一个 Tab；填写接口后点击「解析 JSON」，再从返回字段中选择固定指标的映射，插件在 Host 端拉取并统一展示模型状态、可用率、TTFT、响应耗时和历史记录。
+供应商右侧的「高级设置」支持按监测源 Tab 接入任意**公网 HTTPS + GET + JSON** 状态接口。每个监测源独立一个 Tab；填写接口后点击「测试/解析 JSON」，再从左侧 JSON 树绑定模型列表、模型名称、状态、可用率、TTFT、响应耗时、历史记录和自定义字段。数字型自定义字段可独立设置接口单位（ms/s）、显示单位（跟随/ms/s）和 0–2 位小数。
+
+![填写健康监测接口并解析 JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
+
+![绑定健康监测字段并选择转换方式](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
+
+完整的逐步教程、字段表格、换算示例和保存错误排查见 [npm 包使用文档](./packages/dsh-balance/README.md)。
 
 这个功能只读取第三方监控数据，不调用你的模型 API，不保存模型凭据，也不会消耗你的模型额度。状态代表外部监控源，不等于当前账号状态。
 

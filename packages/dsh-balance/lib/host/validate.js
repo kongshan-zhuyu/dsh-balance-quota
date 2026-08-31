@@ -117,8 +117,9 @@ export async function validateExternalStatusSource(input) {
   if (!safePath(modelListPath)) throw new Error("modelListPath must be a safe JSON path");
   const fields = { ...EXTERNAL_STATUS_FIELDS, ...(input.fields && typeof input.fields === "object" ? input.fields : {}) };
   const customFields = Array.isArray(input.customFields) ? input.customFields.slice(0, 50).map(field => {
-    if (!field || typeof field.name !== "string" || !field.name.trim() || field.name.length > 80 || !safeExternalPath(field.path)) throw new Error("invalid external custom field");
-    return { name: field.name.trim(), path: field.path, transform: ["identity", "number", "percent", "percent100", "percentRaw", "status"].includes(field.transform) ? field.transform : "identity" };
+    if (!field || typeof field.name !== "string" || !field.name.trim() || field.name.length > 80) throw new Error("invalid external custom field name");
+    if (typeof field.path !== "string" || !safeExternalPath(field.path.trim())) throw new Error(`invalid external custom field path: ${String(field.path || "")}`);
+    return { name: field.name.trim(), path: field.path.trim(), transform: ["identity", "number", "percent", "percent100", "percentRaw", "status"].includes(field.transform) ? field.transform : "identity", ...(field.transform === "number" ? { unit: field.unit === "s" ? "s" : "ms", displayUnit: field.displayUnit === "s" || field.displayUnit === "ms" ? field.displayUnit : "", decimals: Math.max(0, Math.min(2, Math.round(Number(field.decimals) || 0))) } : {}) };
   }) : [];
   for (const key of Object.keys(EXTERNAL_STATUS_FIELDS)) if (!safeExternalPath(fields[key])) throw new Error(`invalid external status field: ${key}`);
   const intervalSeconds = Number.isFinite(Number(input.intervalSeconds)) ? Math.max(5, Math.min(86400, Math.trunc(Number(input.intervalSeconds)))) : EXTERNAL_STATUS_DEFAULT_INTERVAL_SECONDS;

@@ -35,6 +35,16 @@ export function normalizeLatency(value, unit = "ms") {
   return Math.round((unit === "s" ? number * 1000 : number) * 1000) / 1000;
 }
 
+function formatCustomNumber(value, field) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return value;
+  const unit = field.unit === "s" ? "s" : "ms";
+  const displayUnit = field.displayUnit === "s" || field.displayUnit === "ms" ? field.displayUnit : unit;
+  const converted = displayUnit === "s" ? (unit === "s" ? number : number / 1000) : (unit === "s" ? number * 1000 : number);
+  const decimals = Math.max(0, Math.min(2, Math.round(Number(field.decimals) || 0)));
+  return `${converted.toFixed(decimals)}${displayUnit}`;
+}
+
 function readMapped(data, path) {
   return path ? readJsonPath(data, path) : undefined;
 }
@@ -94,7 +104,7 @@ export function normalizeExternalStatus(source, payload, now = new Date().toISOS
       } else if (transform === "status") {
         value = EXTERNAL_STATUS_LABELS[applyExternalTransform(raw, "status")] ?? String(raw ?? "");
       } else {
-        value = applyExternalTransform(raw, transform);
+        value = transform === "number" ? formatCustomNumber(raw, field) : applyExternalTransform(raw, transform);
       }
       return [field.name, value === undefined || value === null ? "" : String(value)];
     }));
