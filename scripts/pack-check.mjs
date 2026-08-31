@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 
 const packageRoot = "packages/dsh-balance";
 const manifest = JSON.parse(await readFile(`${packageRoot}/package.json`, "utf8"));
-const required = ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js", "lib/host/index.js", "lib/host/security.js", "lib/client/client.js", "README.md", "LICENSE", "SECURITY.md", "CHANGELOG.md", "docs/images/health-endpoint-test.png", "docs/images/health-monitor-mapping.png"];
+const required = ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js", "lib/host/index.js", "lib/host/security.js", "lib/client/client.js", "README.md", "LICENSE", "SECURITY.md", "CHANGELOG.md", "docs/images/01-provider-settings.png", "docs/images/02-balance-editor.png", "docs/images/03-advanced-models.png", "docs/images/04-health-monitor.png", "docs/images/05-chat-status-bar.png", "docs/images/06-provider-switcher.png", "docs/images/07-health-details.png"];
 for (const relative of required) await access(`${packageRoot}/${relative}`);
 const command = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
 const args = process.platform === "win32" ? ["/d", "/s", "/c", "pnpm pack --dry-run"] : ["pack", "--dry-run"];

@@ -16,15 +16,19 @@ Web 界面提供安全可靠的余额与额度状态栏。
 
 ## 界面预览
 
-### 测试健康监测接口并预览 JSON
+### 余额供应商配置入口
 
-![测试健康监测接口并预览 JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
+![供应商状态配置入口](./packages/dsh-balance/docs/images/01-provider-settings.png)
 
-### 绑定字段、转换数据并实时预览
+### 对话输入框下方的余额状态栏
 
-![绑定健康监测字段](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
+![对话状态栏](./packages/dsh-balance/docs/images/05-chat-status-bar.png)
 
-> 完整功能表与 5 步使用教程见 [`packages/dsh-balance/README.md`](./packages/dsh-balance/README.md)。
+### 模型健康监测详情
+
+![健康监测详情](./packages/dsh-balance/docs/images/07-health-details.png)
+
+> 完整的余额配置、两个高级设置 Tab、字段绑定、状态栏和健康详情教程见 [`packages/dsh-balance/README.md`](./packages/dsh-balance/README.md)。
 
 ---
 

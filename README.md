@@ -16,15 +16,19 @@
 
 ## Screenshots
 
-### Test a health endpoint and inspect its JSON
+### Configure balance providers
 
-![Test a health endpoint and inspect JSON](./packages/dsh-balance/docs/images/health-endpoint-test.png)
+![Provider status settings](./packages/dsh-balance/docs/images/01-provider-settings.png)
 
-### Bind fields, transform values, and preview results
+### Balance status below the chat composer
 
-![Bind health monitoring fields](./packages/dsh-balance/docs/images/health-monitor-mapping.png)
+![Chat balance status bar](./packages/dsh-balance/docs/images/05-chat-status-bar.png)
 
-> See [`packages/dsh-balance/README.md`](./packages/dsh-balance/README.md) for the complete feature table and five-step guide.
+### Model health details
+
+![Model health details](./packages/dsh-balance/docs/images/07-health-details.png)
+
+> See [`packages/dsh-balance/README.md`](./packages/dsh-balance/README.md) for the complete balance setup, both Advanced Settings tabs, field binding, status bar, and health-details guide.
 
 ---
 
