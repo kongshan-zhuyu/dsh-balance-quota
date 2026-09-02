@@ -8,6 +8,11 @@
   "engines": {
     "node": ">=22"
   },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "scripts": {
     "check": "node scripts/check.mjs && node scripts/release-check.mjs",
     "release:check": "node scripts/release-check.mjs",
