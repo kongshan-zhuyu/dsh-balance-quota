@@ -62,8 +62,12 @@ test("writes and reads a private external preview cache atomically", async () =>
   const restored = await readExternalPreviewCache(current, { directory });
   assert.deepEqual(restored.payload, entry.payload);
   assert.equal(restored.fetchedAt, entry.fetchedAt);
-  assert.equal((await stat(directory)).mode & 0o777, 0o700);
-  assert.equal((await stat(join(directory, "ai-input.json"))).mode & 0o777, 0o600);
+  // Windows 不完整保留 Unix 权限位（chmod 0o700/0o600 实际表现为 0o666），
+  // 严格的权限位断言仅适用于 POSIX；Windows 上由上方读写断言保证缓存内容与原子性。
+  if (process.platform !== "win32") {
+    assert.equal((await stat(directory)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(directory, "ai-input.json"))).mode & 0o777, 0o600);
+  }
   assert.equal((await readFile(join(directory, "ai-input.json"), "utf8")).includes(".tmp"), false);
 });
 
