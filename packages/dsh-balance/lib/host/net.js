@@ -9,6 +9,9 @@ export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 10;
 
 const badHost = /(^localhost$|\.local$|\.internal$)/i;
 
+// 这条错误会经 validateProvider 原样回显给用户，必须是可读中文。
+const PRIVATE_ENDPOINT_ERROR = "余额地址指向内网、回环或保留地址，仅允许公网地址";
+
 /**
  * Whether plain HTTP is accepted for outbound provider requests.
  *
@@ -152,9 +155,18 @@ export async function resolvePublicEndpoint(raw) {
     throw new Error("endpoint has an invalid port");
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("endpoint has an invalid port");
+  // IP 字面量不走 getaddrinfo：各平台解析器行为不一致（Linux 对
+  // `[::ffff:7f00:1]` 这类非规范写法直接 ENOTFOUND，错误形态会绕开防线提示），
+  // 且字面量本就无需解析。本地解析后直接交给 privateIp 防线，跨平台行为一致。
+  const literal = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  const literalFamily = net.isIP(literal);
+  if (literalFamily) {
+    if (privateIp(literal)) throw new Error(PRIVATE_ENDPOINT_ERROR);
+    return { url, records: [{ address: literal, family: literalFamily }], port, secure };
+  }
   const records = await dns.lookup(url.hostname, { all: true, verbatim: true });
   if (!records.length || records.some((record) => privateIp(record.address))) {
-    throw new Error("endpoint resolves to a private address");
+    throw new Error(PRIVATE_ENDPOINT_ERROR);
   }
   return { url, records, port, secure };
 }

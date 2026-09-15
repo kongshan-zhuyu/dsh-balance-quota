@@ -435,9 +435,9 @@ test("still allows ordinary public addresses", () => {
   for (const ip of allowed) assert.equal(privateIp(ip), false, `${ip} must be allowed`);
 });
 test("rejects IPv4-mapped and expanded loopback endpoints end to end", async () => {
-  await assert.rejects(() => validateProvider({ id: "a", name: "a", endpoint: "https://[::ffff:127.0.0.1]/x", responsePath: "$.balance" }), /private address/);
-  await assert.rejects(() => validateProvider({ id: "a", name: "a", endpoint: "https://[0:0:0:0:0:0:0:1]/x", responsePath: "$.balance" }), /private address/);
-  await assert.rejects(() => validateProvider({ id: "a", name: "a", endpoint: "https://[::1]/x", responsePath: "$.balance" }), /private address/);
+  await assert.rejects(() => validateProvider({ id: "a", name: "a", endpoint: "https://[::ffff:127.0.0.1]/x", responsePath: "$.balance" }), /仅允许公网地址/);
+  await assert.rejects(() => validateProvider({ id: "a", name: "a", endpoint: "https://[0:0:0:0:0:0:0:1]/x", responsePath: "$.balance" }), /仅允许公网地址/);
+  await assert.rejects(() => validateProvider({ id: "a", name: "a", endpoint: "https://[::1]/x", responsePath: "$.balance" }), /仅允许公网地址/);
 });
 
 test("bounded cache evicts oldest entries and never duplicates a re-set key", () => {
