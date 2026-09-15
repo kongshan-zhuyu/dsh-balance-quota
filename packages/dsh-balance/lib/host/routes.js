@@ -39,7 +39,16 @@ export function createRouter(ctx, options = {}) {
         const input = await body(req);
         const source = await validateExternalStatusSource(input);
         await configStore.mutateConfig(async current => {
-          current.externalStatusSources = normalizeExternalSources([...(Array.isArray(current.externalStatusSources) ? current.externalStatusSources : []).filter(item => item.id !== source.id && (!source.providerId || item.providerId !== source.providerId)), source]);
+          // 与 providers 的 upsert 同理：编辑已有监测源必须保持原位，
+          // 只有新增才追加到末尾。历史上这里也是「先滤掉旧的、再追加」，
+          // 会让被编辑的监测源卡片跳到列表最后。
+          // 匹配条件保持原语义：同 id，或同一个 providerId（每个供应商只保留一个源）。
+          const sources = Array.isArray(current.externalStatusSources) ? current.externalStatusSources : [];
+          const carried = item => item.id === source.id || Boolean(source.providerId && item.providerId === source.providerId);
+          const index = sources.findIndex(carried);
+          current.externalStatusSources = normalizeExternalSources(
+            index === -1 ? [...sources, source] : sources.map(item => (carried(item) ? source : item))
+          );
           await configStore.saveConfig(current);
         });
         externalStatusCache.delete(source.id);
@@ -67,7 +76,14 @@ export function createRouter(ctx, options = {}) {
           await ctx.credentials.set(credentialRefForProvider(provider), input.apiKey);
         }
         await configStore.mutateConfig(async current => {
-          current.providers = [...current.providers.filter(p => p.id !== provider.id), provider];
+          // upsert 时**必须保持原有顺序**：历史实现是「先滤掉旧的、再追加到末尾」，
+          // 于是编辑任何一个已有供应商并保存后，它都会被挪到列表最后一名，
+          // 用户看到的就是「点完保存，这张卡片跑到最下面去了」。
+          // 新建才追加到末尾；编辑则在原位替换。
+          const index = current.providers.findIndex(p => p.id === provider.id);
+          current.providers = index === -1
+            ? [...current.providers, provider]
+            : current.providers.map(p => (p.id === provider.id ? provider : p));
           await configStore.saveConfig(current);
         });
         cache.delete(provider.id);

@@ -1,10 +1,11 @@
 import z from "@deepseek-ai/schemastery";
-import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import { createRouter } from "./routes.js";
 
 export const name = "balance-host";
 export const inject = ["webServer", "credentials"];
-export const SETTINGS_NAMESPACE = settingsNamespace("dsh-balance-quota");
+// DSH >= 0.1.5-rc.2: `settingsNamespace()` was removed; `settings.register()`
+// now takes the raw lowercase-hyphenated namespace string directly.
+export const SETTINGS_NAMESPACE = "dsh-balance-quota";
 const SETTINGS_SCHEMA = z.object({});
 
 // Re-export all required public symbols for 100% backward compatibility with tests and callers
@@ -17,6 +18,8 @@ export { normalizeExternalStatus, previewExternalStatusSource } from "./external
 
 export function apply(ctx) {
   ctx.inject(["settings"], (settingsCtx) => {
+    // Registering the namespace is what lets the client render this plugin's
+    // card in Settings -> Plugins -> Plugin configuration.
     settingsCtx.settings.register(SETTINGS_NAMESPACE, SETTINGS_SCHEMA);
   });
 

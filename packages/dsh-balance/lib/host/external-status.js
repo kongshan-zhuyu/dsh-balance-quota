@@ -3,12 +3,14 @@ import { readJsonPath } from "./json-path.js";
 import { HttpError, formatProviderError, PROVIDER_ERROR_MAX_LENGTH } from "./http-utils.js";
 import { isId, validateExternalStatusSource } from "./validate.js";
 import { externalPreviewFingerprint } from "./external-preview-cache.js";
+import { BoundedCache } from "./bounded-cache.js";
 
 const EXTERNAL_STATUS_DEFAULT_INTERVAL_SECONDS = 60;
 const EXTERNAL_STATUS_MAX_HISTORY = 60;
 const EXTERNAL_PREVIEW_STAGE_MAX_ENTRIES = 32;
+const EXTERNAL_STATUS_CACHE_MAX_ENTRIES = 128;
 
-export const externalStatusCache = new Map();
+export const externalStatusCache = new BoundedCache(EXTERNAL_STATUS_CACHE_MAX_ENTRIES);
 export const externalPreviewStage = new Map();
 
 export function normalizeExternalHealth(value) {
@@ -188,7 +190,7 @@ export async function previewExternalStatusSource(input) {
   const response = await requestPinnedJson({ ...source, method: "GET", timeoutSeconds: source.timeoutSeconds }, { accept: "application/json", ...source.headers });
   if (response.status < 200 || response.status >= 300) throw new HttpError(502, formatProviderError(response.status, response.text));
   let payload;
-  try { payload = JSON.parse(response.text); } catch { throw new HttpError(502, "external status source returned invalid JSON"); }
+  try { payload = JSON.parse(response.text); } catch { throw new HttpError(502, "监控源返回的不是合法 JSON，请确认该地址返回 JSON 数据"); }
   const fetchedAt = new Date().toISOString();
   stageExternalPreview(source, payload, fetchedAt);
   // 预览阶段宽容处理：modelListPath 尚未绑定或结构不匹配时仍返回 JSON 预览与
@@ -203,7 +205,7 @@ export async function queryExternalStatus(source, force = false) {
   const response = await requestPinnedJson({ ...source, method: "GET" }, { accept: "application/json", ...source.headers });
   if (response.status < 200 || response.status >= 300) throw new HttpError(502, formatProviderError(response.status, response.text));
   let payload;
-  try { payload = JSON.parse(response.text); } catch { throw new HttpError(502, "external status source returned invalid JSON"); }
+  try { payload = JSON.parse(response.text); } catch { throw new HttpError(502, "监控源返回的不是合法 JSON，请确认该地址返回 JSON 数据"); }
   const value = normalizeExternalStatus(source, payload);
   externalStatusCache.set(source.id, { at: Date.now(), value });
   return value;

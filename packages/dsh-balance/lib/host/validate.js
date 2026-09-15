@@ -80,7 +80,15 @@ export function safeMetricDisplayUnit(value) {
 
 export async function validateProvider(input) {
   if (!input || !isId(input.id) || typeof input.name !== "string" || input.name.length < 1 || input.name.length > 80) {
-    throw new Error("invalid provider identity");
+    // 这条错误会原样回给前端并显示给用户，因此必须是可读中文。
+    // 历史文案 "invalid provider identity" 是英文，用户看到「点保存就报一串英文」，
+    // 既不知道哪里错了也不知道怎么修。按两种成因分别给出指引。
+    const hasId = Boolean(input) && isId(input.id);
+    throw new Error(
+      hasId
+        ? "显示名称不能为空（1–80 个字符），请填写后重试。"
+        : "供应商标识缺失或非法（仅允许字母、数字、- 和 _，最长 64 位）。请关闭弹窗后从供应商卡片重新进入余额设置。"
+    );
   }
   const timeoutSeconds = Number.isFinite(Number(input.timeoutSeconds)) ? Math.max(1, Math.min(300, Math.trunc(Number(input.timeoutSeconds)))) : DEFAULT_REQUEST_TIMEOUT_SECONDS;
   const queryIntervalMinutes = Number.isFinite(Number(input.queryIntervalMinutes)) ? Math.max(0, Math.min(1440, Math.trunc(Number(input.queryIntervalMinutes)))) : DEFAULT_QUERY_INTERVAL_MINUTES;

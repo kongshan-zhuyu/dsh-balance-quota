@@ -13,6 +13,7 @@ const files = [
   "packages/dsh-balance/lib/host/presets.js",
   "packages/dsh-balance/lib/host/validate.js",
   "packages/dsh-balance/lib/host/config-store.js",
+  "packages/dsh-balance/lib/host/bounded-cache.js",
   "packages/dsh-balance/lib/host/external-status.js",
   "packages/dsh-balance/lib/host/external-preview-cache.js",
   "packages/dsh-balance/lib/host/query.js",
@@ -37,4 +38,9 @@ const clientBundle = await readFile("packages/dsh-balance/lib/client/client.js",
 if (!clientBundle.includes(`id: "${manifest.name}"`)) throw new Error("client bundle loader id must match package name");
 if (!clientBundle.includes(`key: "${manifest.name}"`)) throw new Error("keyed settings slot must use the package name");
 const hostBundle = await readFile("packages/dsh-balance/lib/host/index.js", "utf8");
-if (!hostBundle.includes(`settingsNamespace("${manifest.name}")`)) throw new Error("host settings namespace must match package name");
+// DSH >= 0.1.5-rc.2 removed the `settingsNamespace()` helper: the namespace is now a plain
+// lowercase-hyphenated string passed straight to `settings.register()`. The client card is a
+// keyed slot dispatched by that same namespace, so both sides must agree on the package name.
+// Match the import form only, so an explanatory comment is not mistaken for a real import.
+if (/import\s*\{[^}]*\bsettingsNamespace\b[^}]*\}\s*from/.test(hostBundle)) throw new Error("host must not import the removed settingsNamespace helper");
+if (!hostBundle.includes(`SETTINGS_NAMESPACE = "${manifest.name}"`)) throw new Error("host settings namespace must match package name");

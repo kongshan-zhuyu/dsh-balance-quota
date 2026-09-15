@@ -5,7 +5,10 @@ window.__ModuleLoader__.load({
     const exports = module.exports;
     const React = require("react");
     const h = React.createElement;
-    const inject = ["slots", "connection", "sessions"];
+    // DSH >= 0.1.5-rc.2: the legacy `connection.api.<ns>.<method>()` surface is gone.
+    // Remote namespaces are now first-class cordis services (`remote.llm`, `remote.settings`),
+    // each returning a plain `{ ok, value } / { ok, error }` result instead of `{ result }`.
+    const inject = ["slots", "connection", "sessions", "remote", "remote.llm", "remote.settings"];
 
     const state = {
       selectedProviderId: null,
@@ -17,6 +20,7 @@ window.__ModuleLoader__.load({
       style: null,
       provider: null,
       connection: null,
+      remote: null,
       sessions: null,
       sessionsUnsubscribe: null,
       sessionId: null,
@@ -39,11 +43,17 @@ window.__ModuleLoader__.load({
       return !Number.isFinite(interval) || interval <= 0 || !Number.isFinite(synced) || now - synced >= interval * 60_000;
     };
 
+    // 关闭余额监测的供应商不参与切换：它们既无法提供余额，选中后状态栏也没有可展示的
+    // 内容。选择逻辑与菜单共用这一判定，避免选中一个菜单里根本列不出来的项。
+    const selectableProviders = (providers) => providers.filter(item => item.status !== "disabled" && item.balanceEnabled !== false);
+
     const resolveSelectedProvider = (providers, sessionId, defaultProviderId) => {
+      const selectable = selectableProviders(providers);
       const manual = sessionStorage.getItem(selectionKey(sessionId));
-      if (manual && providers.some(provider => provider.id === manual)) return manual;
-      if (defaultProviderId && providers.some(provider => provider.id === defaultProviderId)) return defaultProviderId;
-      return providers[0]?.id || null;
+      if (manual && selectable.some(provider => provider.id === manual)) return manual;
+      if (defaultProviderId && selectable.some(provider => provider.id === defaultProviderId)) return defaultProviderId;
+      // 全部关闭监测时没有可选供应商；回落空值让状态栏提示未配置，而不是停在已关闭的项上。
+      return selectable[0]?.id || null;
     };
 
     const api = async (path, options) => {
@@ -261,8 +271,21 @@ window.__ModuleLoader__.load({
         .db-row-line{display:flex;align-items:center;gap:10px;min-width:0}
         .db-row-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0;padding-top:8px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
         .db-row-meta .db-meta-note{color:var(--dsw-alias-label-caption)}
-        .db-inline-editor{margin-top:12px;padding:16px;border-radius:10px;background:var(--dsw-alias-bg-module-platform)}
-        .db-meta-error{color:var(--dsw-alias-state-error-primary)}
+        /* 弹窗两个 tab 的表单外壳必须完全一致：都只是排版容器，不带背景/圆角/内边距。
+           .db-inline-editor 原本是「余额表单内联在供应商卡片里」时代的样式（灰底圆角卡片 +
+           12px 上边距），搬进弹窗后它会让余额页比健康页多出一层灰色垫底、少 32px 可用宽度。
+           两个类共用同一条规则，避免再次跑偏。
+           这里显式给 flex + gap，让「说明行 → 表单」的间距在两页之间保持同值。 */
+        .db-inline-editor,.db-external-form{display:flex;flex-direction:column;gap:14px;padding:0;margin:0;border-radius:0;background:transparent}
+        .db-provider-card .db-models-open.active{background:var(--dsw-alias-interactive-bg-hover-solid);border-color:var(--dsw-alias-border-l3)}
+        /* 模型设置就地展开在卡片内：与卡片主体用分隔线区隔，自身可滚动，
+           避免模型很多时把卡片撑得过高、把下方供应商推走。 */
+        .db-models-inline{margin-top:12px;padding-top:14px;border-top:1px solid var(--dsw-alias-border-l2);max-height:420px;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+        /* 错误行占满整行并允许换行：上游报错可能较长（含 JSON 片段或中文说明），
+           若跟余额数字一样挤在 flex 行里，会把卡片撑宽、把按钮推走。
+           min-width:0 允许 flex 子项收缩（否则长内容不肯换行）。
+           再用 line-clamp 限高，避免异常长的响应体把卡片撑得老高。 */
+        .db-meta-error{flex:1 1 100%;min-width:0;color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
         .db-external{margin-top:18px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l2)}
         .db-external-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
         .db-external-head h3{margin:0;font-size:15px;font-weight:600}
@@ -321,7 +344,10 @@ window.__ModuleLoader__.load({
         @keyframes db-spin{to{transform:rotate(360deg)}}
         .db-modal-backdrop{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;overscroll-behavior:none;background:rgba(0,0,0,.38)}
         .db-modal{display:flex;flex-direction:column;width:min(760px,calc(100vw - 32px));height:min(620px,calc(100vh - 48px));overflow:hidden;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);box-shadow:0 18px 60px rgba(0,0,0,.28)}
-        .db-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+        .db-modal-head{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+        .db-modal-empty{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:24px 20px;border:1px dashed var(--dsw-alias-border-l2);border-radius:12px}
+        .db-modal-empty>strong{font-size:14px;color:var(--dsw-alias-label-primary)}
+        .db-modal-empty>p{margin:0;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px}
         .db-modal-close{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer;transition:background .15s,color .15s}
         .db-modal-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
         .db-modal-close:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
@@ -368,9 +394,13 @@ window.__ModuleLoader__.load({
         .db-test-message{margin:8px 0 12px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
         .db-test-message.error{color:var(--dsw-alias-state-error-primary)}
         .db-test-message.success{color:var(--dsw-alias-state-success-primary)}
-        .db-save-message{margin:0;flex:1;text-align:center;padding:2px 12px;max-height:88px;overflow-y:auto;word-break:break-word;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;font-weight:500}
+        .db-save-message{margin:0;flex:1;text-align:center;padding:2px 12px;max-height:88px;overflow-y:auto;word-break:break-word;overflow-wrap:anywhere;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;font-weight:500}
         .db-modal-footer{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:14px 18px;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
         .db-modal-footer .db-quiet,.db-modal-footer .db-primary{white-space:nowrap}
+        /* 页脚按钮两页同源：显式钉住高度/圆角/字号，避免余额页（原 .db-form-actions 的规则）
+           与健康监测页出现尺寸差异。 */
+        .db-modal-footer .db-quiet,.db-modal-footer .db-primary{height:36px;min-width:72px;padding:0 16px;border-radius:18px;font-size:14px;line-height:22px}
+        .db-save-message.ok{color:var(--dsw-alias-state-success-primary, var(--dsw-alias-label-primary))}
         .db-json-node{margin:2px 0;padding-left:14px;border-left:1px solid var(--dsw-alias-border-l3)}
         .db-json-preview-box>.db-json-node{border-left:0;padding-left:2px}
         .db-json-node>summary{display:flex;align-items:center;gap:6px;padding:2px 6px;border-radius:6px;list-style:none;cursor:pointer;font-family:inherit;font-size:11px;transition:background .15s,color .15s}
@@ -536,7 +566,11 @@ window.__ModuleLoader__.load({
         .dsh-balance-provider{min-width:0;overflow:hidden;text-overflow:ellipsis;color:inherit;cursor:pointer}
         .dsh-balance-provider:hover{color:var(--dsw-alias-label-primary,#252a31)}
         .dsh-balance-separator{flex:none;margin:0 7px;color:var(--dsw-alias-label-tertiary,#9299a2)}
-        .dsh-balance-value{flex:none;color:var(--dsw-alias-label-primary,#30353c);font-weight:650;font-variant-numeric:tabular-nums}
+        /* 状态栏空间极窄（跟在供应商名后面），而错误文本可能很长。
+           这里允许收缩并省略，否则一个长报错会把整条状态下拉撑破。
+           完整内容由 JS 侧写入 title，悬停可见。 */
+        .dsh-balance-value{flex:0 1 auto;min-width:0;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary,#30353c);font-weight:650;font-variant-numeric:tabular-nums}
+        .dsh-balance-value.error{font-weight:500}
         .dsh-balance-updated{flex:none;margin-left:8px;color:var(--dsw-alias-label-tertiary,#a0a6ae);font-size:11px}
         .dsh-balance-refresh{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;margin-left:5px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#9299a2);font:14px/1 inherit;cursor:pointer}
         .dsh-balance-refresh.loading{animation:dsh-balance-spin .7s linear infinite}
@@ -814,10 +848,11 @@ window.__ModuleLoader__.load({
     }
 
     function renderProviderMenu(menu, anchor) {
-      // 未配置任何供应商时无可切换项，点击状态栏不应弹出空菜单。
-      if (!state.providers.length) return;
+      // 未配置可切换供应商时不应弹出空菜单。
+      const selectable = selectableProviders(state.providers);
+      if (!selectable.length) return;
       menu.replaceChildren();
-      for (const item of state.providers) {
+      for (const item of selectable) {
         const option = document.createElement("button");
         option.type = "button";
         option.className = `dsh-balance-provider-option${item.id === state.provider?.id ? " active" : ""}`;
@@ -827,13 +862,11 @@ window.__ModuleLoader__.load({
         label.textContent = item.name;
         const value = document.createElement("span");
         value.className = "dsh-balance-provider-option-value";
-        value.textContent = item.status === "disabled"
-          ? "余额监测已关闭"
-          : (item.usageWindows || []).length
-            ? `${Math.max(...item.usageWindows.map(window => window.percent))}%`
-            : item.status === "ok"
-              ? formatMoney(item.available, item.currency)
-              : "查询失败";
+        value.textContent = (item.usageWindows || []).length
+          ? `${Math.max(...item.usageWindows.map(window => window.percent))}%`
+          : item.status === "ok"
+            ? formatMoney(item.available, item.currency)
+            : "查询失败";
         option.append(dot, label, value);
         option.addEventListener("click", event => {
           event.stopPropagation();
@@ -861,9 +894,12 @@ window.__ModuleLoader__.load({
         return;
       }
       const bar = ensureBar();
-      const selected = state.selectedProviderId && providers.some(provider => provider.id === state.selectedProviderId)
-        ? providers.find(provider => provider.id === state.selectedProviderId)
-        : providers[0];
+      // 与供应商菜单、选择逻辑保持一致：已关闭监测的项不作为展示目标，
+      // 否则状态栏会停在一个只显示名字、既无余额也无法切换的供应商上。
+      const selectable = selectableProviders(providers);
+      const selected = state.selectedProviderId && selectable.some(provider => provider.id === state.selectedProviderId)
+        ? selectable.find(provider => provider.id === state.selectedProviderId)
+        : selectable[0];
       const summary = bar.querySelector(".dsh-balance-summary");
       state.provider = selected || null;
       summary.replaceChildren();
@@ -894,7 +930,10 @@ window.__ModuleLoader__.load({
       } else if (selected.status !== "ok") {
         summary.classList.add("error");
         put("查询失败", "dsh-balance-separator");
-        put(selected.error || "余额查询失败", "dsh-balance-value");
+        // 状态栏位置窄，错误文本会被 CSS 省略号截断；完整内容挂到 title 供悬停查看，
+        // 并加 error 类降低字重，避免长句在状态栏里显得过于抢眼。
+        const errorSpan = put(selected.error || "余额查询失败", "dsh-balance-value error");
+        errorSpan.title = selected.error || "余额查询失败";
       } else {
         const windows = selected.usageWindows || [];
         if (windows.length) {
@@ -982,17 +1021,75 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // 把「已注册路由」（listProviders，仅有 id/name）与「可配置供应商声明」
+    // （listConfigurableProviders，带 settingsNs/settingsPath）合并成一张表，
+    // 等价于旧版 `llm.providers()` 返回的 directory。声明过但当前未注册的路由
+    // 以 active: false 收录，供高级设置面板仍然列出（便于修配置）。
+    const joinProviderDirectory = (registered, configurable) => {
+      const list = Array.isArray(registered) ? registered : [];
+      const declared = Array.isArray(configurable) ? configurable : [];
+      const live = new Map(list.map(entry => [entry.id, entry]));
+      const rows = declared.map(entry => ({
+        provider: entry.provider,
+        displayName: entry.displayName || entry.provider,
+        settingsNs: entry.settingsNs,
+        settingsPath: Array.isArray(entry.settingsPath) ? entry.settingsPath : [],
+        declared: entry.declared,
+        error: entry.error,
+        active: live.has(entry.provider),
+        models: live.get(entry.provider)?.models
+      }));
+      const declaredRoutes = new Set(declared.map(entry => entry.provider));
+      for (const entry of list) {
+        if (declaredRoutes.has(entry.id)) continue;
+        rows.push({
+          provider: entry.id,
+          displayName: entry.name || entry.id,
+          settingsNs: ROUTE_SETTINGS_NAMESPACE_FALLBACK,
+          settingsPath: ["providers", entry.id],
+          declared: false,
+          active: true,
+          models: entry.models
+        });
+      }
+      return rows;
+    };
+
+    // 命中不到声明时使用的兜底命名空间：多路由供应商（网关/自建）统一由它托管。
+    const ROUTE_SETTINGS_NAMESPACE_FALLBACK = "llm-pi-ai";
+
+    // 读取 Remote 命名空间：优先取 cordis 服务，缺失时回落到 state 上的缓存引用。
+    // 无论哪条路径都做形状校验，避免再出现 `Cannot read properties of undefined`。
+    const remoteNamespace = (key) => {
+      const service = state.remote?.[key] ?? state[key === "llm" ? "remoteLlm" : "remoteSettings"];
+      if (!service) throw new Error(`宿主未提供 Remote 命名空间「${key}」，请确认 DSH 版本 >= 0.1.5-rc.2`);
+      return service;
+    };
+
+    // 统一 Remote 失败结果的错误信息提取（新契约是 `{ ok: false, error: { code, message } }`）。
+    const remoteFailure = (response, fallback) => {
+      const message = response?.error?.message || response?.error;
+      const error = new Error(typeof message === "string" && message ? message : fallback);
+      error.code = response?.error?.code;
+      return error;
+    };
+
     const loadLlmSettingsSnapshot = async (force = false) => {
       if (!force && state.llmSettingsSnapshot) return state.llmSettingsSnapshot;
       if (!force && state.llmSettingsPromise) return state.llmSettingsPromise;
-      const connection = state.connection;
-      if (!connection) throw new Error("未连接到 DSH 宿主服务");
       const pending = Promise.all([
-        connection.api.llm.providers({}),
-        connection.api.settings.describe({})
-      ]).then(([directory, settings]) => {
-        if (!directory.result.ok || !settings.result.ok) throw new Error("无法读取模型供应商");
-        const snapshot = { directory, settings };
+        remoteNamespace("llm").listConfigurableProviders(),
+        remoteNamespace("llm").listProviders(),
+        remoteNamespace("settings").describe()
+      ]).then(([configurable, registered, settings]) => {
+        if (!configurable.ok) throw remoteFailure(configurable, "无法读取模型供应商");
+        if (!registered.ok) throw remoteFailure(registered, "无法读取模型供应商");
+        if (!settings.ok) throw remoteFailure(settings, "无法读取 DSH 设置");
+        // 新契约把结果拍平在顶层：`{ ok: true, value }`（旧版是 `{ result: { ok, value } }`）。
+        const snapshot = {
+          directory: { result: { ok: true, value: { providers: joinProviderDirectory(registered.value, configurable.value) } } },
+          settings: { result: { ok: true, value: settings.value } }
+        };
         state.llmSettingsSnapshot = snapshot;
         return snapshot;
       }).finally(() => {
@@ -1054,14 +1151,14 @@ window.__ModuleLoader__.load({
       const [modelProviders, setModelProviders] = React.useState([]);
 
       React.useEffect(() => {
-        if (!state.connection) return;
+        if (!state.remote?.llm || !state.remote?.settings) return;
         // 始终强制刷新（force），设置页/弹窗打开时模型页的增删改立即同步；
         // refreshKey 仅用于弹窗打开时再触发一次。
         loadLlmSettingsSnapshot(true).then(({ directory, settings }) => {
-          const namespaces = new Map(settings.result.value.namespaces.map(item => [item.ns, item]));
+          const namespaces = new Map((settings.result.value.namespaces || []).map(item => [item.ns, item]));
           const atPath = (value, path) => path.reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), value);
           setModelProviders(
-            directory.result.value.providers
+            (directory.result.value.providers || [])
               .filter(entry => {
                 const namespace = namespaces.get(entry.settingsNs);
                 return entry.active && namespace && (entry.settingsPath.length === 0 || atPath(namespace.value, entry.settingsPath) !== undefined);
@@ -1110,9 +1207,9 @@ window.__ModuleLoader__.load({
             throw new Error("读取 DSH 模型设置失败");
           }
           const route = boundRoute(provider?.id) || provider?.id;
-          const dirProvider = directoryRes.result.value.providers.find(p => p.provider === route || p.provider === provider?.id);
+          const dirProvider = (directoryRes.result.value.providers || []).find(p => p.provider === route || p.provider === provider?.id);
           const ns = dirProvider?.settingsNs || (provider?.preset === "deepseek" || provider?.id === "deepseek" ? "llm-deepseek" : "llm-pi-ai");
-          const namespace = settingsRes.result.value.namespaces.find(n => n.ns === ns);
+          const namespace = (settingsRes.result.value.namespaces || []).find(n => n.ns === ns);
           const settingsPath = dirProvider?.settingsPath || (ns === "llm-pi-ai" ? ["providers", route] : []);
 
           let current = namespace?.value;
@@ -1146,6 +1243,13 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         // 弹窗每次打开都强制重新拉取模型配置，避免模型页增删改后读到旧缓存。
+        // 未选中供应商时不拉取，交由空状态引导先选择。
+        if (!provider?.id) {
+          setLoading(false);
+          setLlmMeta(null);
+          setError("");
+          return;
+        }
         loadProviderModels(true);
       }, [loadProviderModels, refreshKey]);
 
@@ -1198,9 +1302,6 @@ window.__ModuleLoader__.load({
         setError("");
         setSuccessMsg("");
         try {
-          const connection = state.connection;
-          if (!connection) throw new Error("未连接到宿主服务");
-
           const isNew = editingModelId === "__new__";
           const updatedItem = {
             id: modelDraft.id.trim(),
@@ -1247,16 +1348,9 @@ window.__ModuleLoader__.load({
             ops.push({ op: "unset", path: [...llmMeta.settingsPath, "reasoning"] });
           }
 
-          const res = await connection.api.settings.mutate({
-            ns: llmMeta.ns,
-            ops,
-            expectedRevision: llmMeta.revision
-          });
+          const res = await remoteNamespace("settings").mutate(llmMeta.ns, ops, llmMeta.revision);
 
-          if (!res.result.ok) {
-            const errMsg = res.result.error?.message || (typeof res.result.error === "string" ? res.result.error : JSON.stringify(res.result.error)) || "保存模型失败";
-            throw new Error(errMsg);
-          }
+          if (!res.ok) throw remoteFailure(res, "保存模型失败");
 
           setSuccessMsg(`已成功保存模型：${updatedItem.name || updatedItem.id}`);
           setEditingModelId(null);
@@ -1274,15 +1368,9 @@ window.__ModuleLoader__.load({
         setError("");
         setSuccessMsg("");
         try {
-          const connection = state.connection;
-          if (!connection) throw new Error("未连接到宿主服务");
           const nextModels = llmMeta.models.filter(m => m.id !== modelId);
-          const res = await connection.api.settings.mutate({
-            ns: llmMeta.ns,
-            ops: [{ op: "set", path: [...llmMeta.settingsPath, "models"], value: nextModels }],
-            expectedRevision: llmMeta.revision
-          });
-          if (!res.result.ok) throw new Error(res.result.error || "删除模型失败");
+          const res = await remoteNamespace("settings").mutate(llmMeta.ns, [{ op: "set", path: [...llmMeta.settingsPath, "models"], value: nextModels }], llmMeta.revision);
+          if (!res.ok) throw remoteFailure(res, "删除模型失败");
           setSuccessMsg(`已删除模型：${modelId}`);
           if (editingModelId === modelId) cancelEdit();
           await loadProviderModels(true);
@@ -1298,14 +1386,8 @@ window.__ModuleLoader__.load({
         setError("");
         setSuccessMsg("");
         try {
-          const connection = state.connection;
-          if (!connection) throw new Error("未连接到宿主服务");
-          const res = await connection.api.settings.mutate({
-            ns: llmMeta.ns,
-            ops: [{ op: "unset", path: [...llmMeta.settingsPath, "models"] }],
-            expectedRevision: llmMeta.revision
-          });
-          if (!res.result.ok) throw new Error(res.result.error || "重置失败");
+          const res = await remoteNamespace("settings").mutate(llmMeta.ns, [{ op: "unset", path: [...llmMeta.settingsPath, "models"] }], llmMeta.revision);
+          if (!res.ok) throw remoteFailure(res, "重置失败");
           setSuccessMsg("已恢复为默认模型目录");
           cancelEdit();
           await loadProviderModels(true);
@@ -1315,6 +1397,17 @@ window.__ModuleLoader__.load({
           setSaving(false);
         }
       };
+
+      // 模型设置在本卡片内展开，provider 由卡片提供，正常情况下必然存在。
+      // 保留一个兜底提示，避免异常情况下渲染出空白面板。
+      if (!provider?.id) {
+        return h(
+          "div",
+          { className: "db-modal-empty" },
+          h("strong", null, "未获取到供应商上下文"),
+          h("p", null, "请从供应商卡片上的「模型设置」按钮进入。")
+        );
+      }
 
       if (loading) return h("div", { style: { padding: 16 } }, "正在读取模型配置…");
       if (!llmMeta) return h("div", { style: { padding: 16 } }, error || "无法读取该供应商的模型配置");
@@ -1338,6 +1431,9 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 { className: "db-row-line" },
+                // 可用状态点属于标题行：放进 db-row-meta 会被那行的 padding-top 推下去，
+                // 且与模型 ID 错行，看起来像掉到了卡片底部。
+                h("span", { className: "db-live" }),
                 h("span", { className: "db-model-id" }, model.id),
                 h("div", { className: "db-spacer" }),
                 h("button", { className: "db-quiet", type: "button", style: { height: 28, fontSize: 12, padding: "0 10px" }, onClick: () => isEditing ? cancelEdit() : startEdit(model) }, isEditing ? "收起" : "编辑"),
@@ -1346,7 +1442,6 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 { className: "db-row-meta" },
-                h("span", { className: "db-live" }),
                 model.name && model.name !== model.id && h("span", { className: "db-model-name" }, model.name),
                 model.contextWindow && h("span", { className: "db-model-tag" }, `上下文 ${formatCapacity(model.contextWindow)}`),
                 model.maxTokens && h("span", { className: "db-model-tag" }, `输出 ${formatCapacity(model.maxTokens)}`),
@@ -1522,7 +1617,11 @@ window.__ModuleLoader__.load({
         const [externalEditing, setExternalEditing] = React.useState(null);
         const [externalLoading, setExternalLoading] = React.useState(false);
         const [advancedOpen, setAdvancedOpen] = React.useState(false);
-        const [advancedTab, setAdvancedTab] = React.useState("models");
+        // 模型设置不再用弹窗，而是在各自供应商卡片内就地展开。
+        // 这里记的是「哪张卡片的模型区是展开的」——用 provider id 而非布尔值，
+        // 保证同一时刻只有一张卡片展开，且切换卡片时不会串。
+        const [modelsExpandedFor, setModelsExpandedFor] = React.useState(null);
+        const [advancedTab, setAdvancedTab] = React.useState("balance");
         const [advancedProvider, setAdvancedProvider] = React.useState(null);
         const [externalPreview, setExternalPreview] = React.useState(null);
         const [externalPreviewing, setExternalPreviewing] = React.useState(false);
@@ -1689,7 +1788,9 @@ window.__ModuleLoader__.load({
           const s = statuses[id];
           if (!s) return null;
           if (s.status === "disabled") return [h("span", { className: "db-meta-note" }, "余额监测已关闭")];
-          if (s.status !== "ok") return [h("span", { className: "db-meta-error" }, s.error || "查询失败")];
+          // 错误文本在卡片里被 line-clamp 限高，完整内容挂到 title 上，
+          // 用户悬停即可看到全文，不会因为限高而丢失信息。
+          if (s.status !== "ok") return [h("span", { className: "db-meta-error", title: s.error || "查询失败" }, s.error || "查询失败")];
           const out = (s.usageWindows || []).length ? [] : [h("span", { key: "bal" }, formatMoney(s.available, s.currency))];
           for (const item of s.usageWindows || []) {
             const label = item.type === "rolling" ? "滚动" : item.type === "weekly" ? "本周" : "本月";
@@ -1699,16 +1800,23 @@ window.__ModuleLoader__.load({
           return out;
         };
 
+        // 模型设置现在挂在「哪张供应商卡片」上，供应商上下文由卡片本身提供，
+        // 不再需要一个跨卡片聚合的供应商下拉清单，故此处只保留 configuredProviders。
+        const configuredProviders = config?.providers || [];
+
         if (!config) return h("div", { style: { padding: 16 } }, message || "正在加载…");
 
-        const draftPayload = () => {
-          const preset = form.preset || (form.route === "opencode-go" || form.id === "opencode-go" ? "opencode-go" : form.route === "deepseek" || form.id === "deepseek" || form.id === "deepseek-official" ? "deepseek" : "");
+        // draftPayload / validateBalanceDraft 接受可选的草稿参数：
+        // 「引入供应商」菜单会绕过表单，直接用自动填充的草稿保存出卡片（见 persistDraft），
+        // 此时没有 form 状态可读，必须把草稿显式传进来。
+        const draftPayload = (d = form) => {
+          const preset = d.preset || (d.route === "opencode-go" || d.id === "opencode-go" ? "opencode-go" : d.route === "deepseek" || d.id === "deepseek" || d.id === "deepseek-official" ? "deepseek" : "");
           const body = {
-            ...form,
+            ...d,
             ...(preset ? { preset } : {}),
-            apiKey: form.apiKey || undefined,
-            method: form.method === "POST" ? "POST" : "GET",
-            valueDivisor: form.conversionEnabled ? Math.max(1, Number(form.valueDivisor) || 1) : 1
+            apiKey: d.apiKey || undefined,
+            method: d.method === "POST" ? "POST" : "GET",
+            valueDivisor: d.conversionEnabled ? Math.max(1, Number(d.valueDivisor) || 1) : 1
           };
           delete body.conversionEnabled;
           if (body.preset) {
@@ -1718,9 +1826,9 @@ window.__ModuleLoader__.load({
           } else if (body.endpoint && body.endpoint.startsWith("/") && body.endpointBase) {
             body.endpoint = body.endpointBase.replace(/\/+$/, "") + body.endpoint;
           }
-          if (form.headersText.trim()) {
+          if (d.headersText.trim()) {
             body.headers = Object.fromEntries(
-              form.headersText
+              d.headersText
                 .split(/[\r\n]+/)
                 .map(line => {
                   const at = line.indexOf(":");
@@ -1732,7 +1840,27 @@ window.__ModuleLoader__.load({
           return body;
         };
 
+        // 提交前的前置校验。历史缺陷：未配置余额的供应商进「余额设置」时表单是空的
+        // （连 id 都没有），点保存直接撞 Host 的 "invalid provider identity"，
+        // 用户只看到一句莫名其妙的英文报错。这里把可判断的问题在本地就说清楚，
+        // 并给出「该填哪里」的指引。
+        const validateBalanceDraft = (d = form) => {
+          if (!d.id) return "缺少供应商标识，请关闭弹窗后从供应商卡片重新进入余额设置。";
+          if (!d.name.trim()) return "请填写显示名称。";
+          const isPreset = Boolean(d.preset);
+          if (!isPreset && !d.endpoint.trim()) return "请填写余额查询地址（完整 http/https 地址，或以 / 开头拼接模型页基础地址）。";
+          // 凭据缺失**不在这里拦**：Host 的 /provider/test 已经返回中文
+          // 「API Key 或凭据引用不能为空」，前端再判一次只会造成双重逻辑、
+          // 并可能误伤「凭据由 Host 侧解析」的合法场景。放在后端一处维护。
+          return "";
+        };
+
         const testProvider = async () => {
+          const invalid = validateBalanceDraft();
+          if (invalid) {
+            setTestResult({ status: "error", error: invalid });
+            return;
+          }
           setTesting(true);
           setTestResult(null);
           try {
@@ -1745,83 +1873,126 @@ window.__ModuleLoader__.load({
           }
         };
 
+        // 把一份草稿写入配置并刷新本地状态。两个调用方：
+        //   1. saveProvider（弹窗页脚的「保存」按钮，草稿来自表单状态）；
+        //   2. 「引入供应商」菜单项——用户反馈「点引入不应该直接增加一个卡片吗」，
+        //      因此点击菜单项 = 用自动填充的草稿**直接保存出卡片**，
+        //      而不是先把用户领进表单再手工保存。地址/JSON 路径猜错时卡片会显示
+        //      具体报错，用户再从卡片上的「余额设置」进入微调即可。
+        const persistDraft = async (d, successMessage) => {
+          const invalid = validateBalanceDraft(d);
+          if (invalid) throw new Error(invalid);
+          const body = draftPayload(d);
+          const data = await api("/provider", { method: "POST", body: JSON.stringify(body) });
+          let bindings = { ...(config.bindings || {}) };
+          if (d.route) {
+            for (const [key, bid] of Object.entries(bindings)) {
+              if (bid === data.provider.id) delete bindings[key];
+            }
+            bindings[d.route] = data.provider.id;
+            await api("/preferences", { method: "POST", body: JSON.stringify({ statusBar: config.statusBar, bindings }) });
+          }
+          const saved = {
+            ...data.provider,
+            method: body.method,
+            headers: body.headers || {},
+            ...(body.valueDivisor ? { valueDivisor: Number(body.valueDivisor) } : {})
+          };
+          // 与 Host 端保持同一套保序语义：编辑已有供应商必须**原位替换**，
+          // 只有新增才追加到末尾。历史实现这里也是「先滤掉旧的、再追加」，
+          // 即使 Host 存对了顺序，前端这一份本地副本仍会立刻把卡片挪到最下面，
+          // 用户看到的就是「点保存后这张卡片跑到底部」。
+          const existingIndex = config.providers.findIndex(item => item.id === data.provider.id);
+          const nextConfig = {
+            ...config,
+            providers: existingIndex === -1
+              ? [...config.providers, saved]
+              : config.providers.map(item => (item.id === data.provider.id ? saved : item)),
+            bindings
+          };
+          setConfig(nextConfig);
+          latestConfigRef.current = nextConfig;
+          state.config = nextConfig;
+          state.requestGeneration += 1;
+          balanceSummaryGeneration.current += 1;
+          // 与健康监测页一致：保存成功后关闭弹窗并清空草稿/测试结果，
+          // 让「保存」有明确的结束反馈，而不是弹窗停在旧数据上。
+          closeAdvanced();
+          setMessage(
+            successMessage
+              || (d.route
+                ? `已保存并绑定到 ${modelProviders.find(item => item.id === d.route)?.name || d.route}`
+                : d.credentialRef
+                  ? "供应商已保存；将复用模型页的凭据"
+                  : "供应商已保存；密钥已写入系统钥匙串")
+          );
+          if (saved.balanceEnabled === false) {
+            const disabled = { id: saved.id, name: saved.name, status: "disabled" };
+            setStatuses(current => ({ ...current, [saved.id]: disabled }));
+            state.providers = state.providers.some(item => item.id === saved.id)
+              ? state.providers.map(item => item.id === saved.id ? disabled : item)
+              : [...state.providers, disabled];
+            renderBar(nextConfig, state.providers);
+          } else {
+            loadSummary();
+            refreshBar();
+          }
+          return saved;
+        };
+
         const saveProvider = async (event) => {
           event.preventDefault();
           try {
-            const body = draftPayload();
-            const data = await api("/provider", { method: "POST", body: JSON.stringify(body) });
-            let bindings = { ...(config.bindings || {}) };
-            if (form.route) {
-              for (const [key, bid] of Object.entries(bindings)) {
-                if (bid === data.provider.id) delete bindings[key];
-              }
-              bindings[form.route] = data.provider.id;
-              await api("/preferences", { method: "POST", body: JSON.stringify({ statusBar: config.statusBar, bindings }) });
-            }
-            const saved = {
-              ...data.provider,
-              method: body.method,
-              headers: body.headers || {},
-              ...(body.valueDivisor ? { valueDivisor: Number(body.valueDivisor) } : {})
-            };
-            const nextConfig = {
-              ...config,
-              providers: [...config.providers.filter(item => item.id !== data.provider.id), saved],
-              bindings
-            };
-            setConfig(nextConfig);
-            latestConfigRef.current = nextConfig;
-            state.config = nextConfig;
-            state.requestGeneration += 1;
-            balanceSummaryGeneration.current += 1;
-            setForm(blankForm);
-            setEditing(null);
-            setMessage(
-              form.route
-                ? `已保存并绑定到 ${modelProviders.find(item => item.id === form.route)?.name || form.route}`
-                : form.credentialRef
-                  ? "供应商已保存；将复用模型页的凭据"
-                  : "供应商已保存；密钥已写入系统钥匙串"
-            );
-            if (saved.balanceEnabled === false) {
-              const disabled = { id: saved.id, name: saved.name, status: "disabled" };
-              setStatuses(current => ({ ...current, [saved.id]: disabled }));
-              state.providers = state.providers.some(item => item.id === saved.id)
-                ? state.providers.map(item => item.id === saved.id ? disabled : item)
-                : [...state.providers, disabled];
-              renderBar(nextConfig, state.providers);
-            } else {
-              loadSummary();
-              refreshBar();
-            }
+            await persistDraft(form);
           } catch (error) {
+            // 保存失败必须显示在弹窗页脚里。原先只 setMessage()，而那是卡片列表
+            // 下方的提示位——弹窗打开时它在背后，用户根本看不见，表现为「点保存没反应」。
+            setTestResult({ status: "error", error: error.message });
             setMessage(error.message);
             setMessageKind("error");
           }
         };
 
+        // 引入菜单的统一行为：自动填充的草稿**直接保存出卡片**（用户预期：
+        // 「点引入 = 列表里马上多一张卡片」）。保存失败（如地址为空、网络错误）
+        // 时回落到旧的编辑态——草稿进表单、卡片出现「配置中」编辑器，
+        // 用户补全后再手工保存，输入不丢。
+        const importDirectly = async (draft) => {
+          try {
+            await persistDraft(draft, `已引入供应商「${draft.name || draft.id}」；地址与 JSON 路径是自动推断的，可点卡片上的「余额设置」微调`);
+          } catch (error) {
+            setForm(draft);
+            setEditing(draft.id || "__new");
+            setMessage(`自动引入失败（${error.message}），已保留草稿供手动补全`);
+            setMessageKind("error");
+          }
+        };
+
         const beginAdd = (source) => {
-          setForm(
-            source
-              ? {
-                  ...blankForm,
-                  id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
-                  name: source.name,
-                  credentialRef: source.credentialRef,
-                  route: source.id,
-                  endpointBase: source.baseURL || "",
-                  endpoint: "/usage"
-                }
-              : blankForm
-          );
-          setEditing(source?.id || "__new");
+          // 自定义接入没有任何可自动填充的信息，必须先出表单。
+          if (!source) {
+            setForm(blankForm);
+            setEditing("__new");
+            setImportMenuOpen(false);
+            return;
+          }
           setImportMenuOpen(false);
+          importDirectly({
+            ...blankForm,
+            id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
+            name: source.name,
+            credentialRef: source.credentialRef,
+            route: source.id,
+            endpointBase: source.baseURL || "",
+            endpoint: "/usage"
+          });
         };
 
         const beginPreset = (source, preset = "deepseek") => {
           const id = source?.id || preset;
           const name = source?.name || (preset === "deepseek" ? "DeepSeek" : "OpenCode Go");
-          setForm({
+          setImportMenuOpen(false);
+          importDirectly({
             ...blankForm,
             id: id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
             name,
@@ -1831,14 +2002,13 @@ window.__ModuleLoader__.load({
             endpointBase: "",
             endpoint: ""
           });
-          setEditing(id);
-          setImportMenuOpen(false);
         };
 
         const beginNeco = (source) => {
           const base = String(source.baseURL || "").replace(/\/+$/, "");
           const endpoint = /\/v1$/i.test(base) ? "/usage" : "/v1/usage";
-          setForm({
+          setImportMenuOpen(false);
+          importDirectly({
             ...blankForm,
             id: source.id.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64),
             name: source.name,
@@ -1852,8 +2022,6 @@ window.__ModuleLoader__.load({
             conversionEnabled: true,
             valueDivisor: 500000
           });
-          setEditing(source.id);
-          setImportMenuOpen(false);
         };
 
         const beginEdit = (provider) => {
@@ -2027,9 +2195,16 @@ window.__ModuleLoader__.load({
           h(
             "div",
             { className: "db-inline-editor" },
+            // 与健康监测页对称的顶部说明行：两个 tab 的第一眼结构保持一致，
+            // 用户切换时不会觉得「少了一行」。
+            h(
+              "div",
+              { className: "db-models-head" },
+              h("span", null, "配置余额查询端点，系统将按刷新间隔请求并展示可用余额或额度。")
+            ),
             h(
               "form",
-              { className: "db-form", onSubmit: saveProvider },
+              { className: "db-form", id: "db-balance-form", onSubmit: saveProvider },
               h(
                 "label",
                 { className: "db-monitor-toggle" },
@@ -2049,7 +2224,7 @@ window.__ModuleLoader__.load({
                 : form.preset === "opencode-go"
                   ? h("p", { className: "db-message db-field wide" }, "已使用 OpenCode Go 官方额度接口，自动查询 5 小时、每周和每月用量。")
                   : [
-                      field("endpoint", form.endpointBase ? "余额查询地址（以 / 开头时将拼接基础地址）" : "余额查询 HTTPS 地址", "url", true),
+                      field("endpoint", form.endpointBase ? "余额查询地址（以 / 开头时将拼接基础地址）" : "余额查询地址（http 或 https）", "url", true),
                       form.endpointBase &&
                         h("p", { className: "db-message db-field wide" }, "已复用模型页基础地址：", form.endpointBase, "，仅需在下方追加路径（如 /usage）；或保留为完整地址。"),
                       h(
@@ -2119,21 +2294,42 @@ window.__ModuleLoader__.load({
                   value: form.timeoutSeconds,
                   onChange: event => setForm({ ...form, timeoutSeconds: Number(event.target.value) })
                 })
-              ),
-              testResult &&
-                h(
-                  "div",
-                  { className: "db-field wide" },
-                  h("p", { className: testResult.status === "ok" ? "db-message" : "db-message error" }, testResult.status === "ok" ? `测试成功: 可用额度 ${testResult.available ?? "无数值"} ${testResult.currency || ""}` : `测试失败: ${testResult.error || "未知错误"}`)
-                ),
-              h(
-                "div",
-                { className: "db-form-actions" },
-                h("button", { className: "db-quiet", type: "button", onClick: () => { setForm(blankForm); setEditing(null); } }, "取消"),
-                h("button", { className: "db-quiet", type: "button", onClick: testProvider, disabled: testing }, testing ? "测试中…" : "测试"),
-                h("button", { className: "db-primary", type: "submit" }, "保存")
               )
             )
+          );
+
+        // 关闭弹窗的唯一入口：背景点击、右上角 ×、余额页「取消」都走这里。
+        // 必须同时重置两页的草稿与残留提示，否则下次打开会看到上一次的
+        // 空表单或红字报错（历史实现只 setAdvancedOpen(false)，状态是脏的）。
+        // 「取消」曾经只重置表单却忘了关弹窗，用户看到的是「点了没反应」。
+        const closeAdvanced = () => {
+          setAdvancedOpen(false);
+          setForm(blankForm);
+          setEditing(null);
+          setTestResult(null);
+          externalPreviewLoadGeneration.current += 1;
+          setExternalEditing(null);
+          setExternalSaveMessage("");
+        };
+
+        // 余额表单的操作行提到弹窗的兄弟页脚里（见 advancedModal），与健康监测页保持一致：
+        // 两页共用同一个 .db-modal-footer，天然固定在弹窗底部、不随内容滚动，
+        // 且按钮尺寸/间距/分隔线完全同源，不会出现两页样式不一致。
+        // 按钮通过 form="db-balance-form" 关联到内容区的表单，因此仍能原生提交。
+        const advancedBalanceFooter = () =>
+          advancedProvider &&
+          h(
+            "div",
+            { className: "db-modal-footer" },
+            testResult &&
+              h(
+                "p",
+                { className: testResult.status === "ok" ? "db-save-message ok" : "db-save-message", role: "alert" },
+                testResult.status === "ok" ? `测试成功：可用额度 ${testResult.available ?? "无数值"} ${testResult.currency || ""}` : `测试失败：${testResult.error || "未知错误"}`
+              ),
+            h("button", { className: "db-quiet", type: "button", onClick: closeAdvanced }, "取消"),
+            h("button", { className: "db-quiet", type: "button", onClick: testProvider, disabled: testing }, testing ? "测试中…" : "测试"),
+            h("button", { className: "db-primary", type: "submit", form: "db-balance-form" }, "保存")
           );
 
         const externalPayload = () => {
@@ -2318,9 +2514,11 @@ window.__ModuleLoader__.load({
             setExternalTestMessage("请先填写请求地址");
             return;
           }
-          if (!/^https:\/\//i.test(externalForm.endpoint.trim())) {
+          // 允许 http：部分网关部署在无域名的裸 IP 上，无法签发证书。真正的
+          // SSRF 防线在 Host 端（协议白名单 + 公网地址校验 + 禁止重定向）。
+          if (!/^https?:\/\//i.test(externalForm.endpoint.trim())) {
             setExternalTestState("error");
-            setExternalTestMessage("请求地址必须使用 HTTPS");
+            setExternalTestMessage("请求地址必须以 http:// 或 https:// 开头");
             return;
           }
           setExternalPreviewing(true);
@@ -2458,15 +2656,22 @@ window.__ModuleLoader__.load({
           setExternalSaveMessage("");
           try {
             const data = await api("/external-status-source", { method: "POST", body: JSON.stringify(externalPayload()) });
+            const savedSources = config.externalStatusSources || [];
+            // 与 providers 同一套保序语义：编辑已有监测源**原位替换**，新增才追加。
+            // 历史实现是「先滤掉旧的、再追加」，会让被编辑的监测源卡片跳到列表最后。
+            const carriedSource = item => item.id === data.source.id || Boolean(data.source.providerId && item.providerId === data.source.providerId);
+            const sourceIndex = savedSources.findIndex(carriedSource);
             const nextConfig = {
               ...config,
-              externalStatusSources: [...(config.externalStatusSources || []).filter(item => item.id !== data.source.id), data.source]
+              externalStatusSources: sourceIndex === -1
+                ? [...savedSources, data.source]
+                : savedSources.map(item => (carriedSource(item) ? data.source : item))
             };
             setConfig(nextConfig);
             state.config = nextConfig;
             renderBar(nextConfig, state.providers);
-            setExternalEditing(null);
-            setAdvancedOpen(false);
+            // 保存成功后同样走统一关闭：清掉草稿与残留提示，避免下次打开看到旧状态。
+            closeAdvanced();
             setExternalTestState("success");
             setExternalTestMessage("");
             setMessage(data.warning ? `监测源已保存；${data.warning}` : "监测源已保存");
@@ -3103,7 +3308,7 @@ window.__ModuleLoader__.load({
             { className: "db-external-form" },
             h(
               "div",
-              { className: "db-models-head", style: { marginBottom: 4 } },
+              { className: "db-models-head" },
               h("span", null, "配置健康监测端点，系统将定期请求并展示可用率与响应状态。")
             ),
             h(
@@ -3141,7 +3346,7 @@ window.__ModuleLoader__.load({
                 h(
                   "div",
                   { className: "db-endpoint-row" },
-                  h("input", { id: "db-external-endpoint", type: "url", placeholder: "https://", value: externalForm.endpoint, required: true, onChange: event => setExternalForm({ ...externalForm, endpoint: event.target.value }) }),
+                  h("input", { id: "db-external-endpoint", type: "url", placeholder: "https:// 或 http://", value: externalForm.endpoint, required: true, onChange: event => setExternalForm({ ...externalForm, endpoint: event.target.value }) }),
                   h("button", { className: "db-quiet", type: "button", onClick: previewExternal, disabled: externalPreviewing }, externalPreviewing ? "测试中" : "测试"),
                   externalPreviewing && h("div", { className: "db-endpoint-loading" })
                 )
@@ -3174,8 +3379,83 @@ window.__ModuleLoader__.load({
             )
           );
 
+        const configuredIds = new Set(configuredProviders.map(p => p.id));
+        const configuredRoutes = new Set(Object.keys(config.bindings || {}));
+
+        // Candidate model providers not yet configured
+        const unconfiguredModelProviders = modelProviders.filter(mp => !configuredIds.has(mp.id) && !configuredRoutes.has(mp.id));
+        const hasDeepSeekPreset = configuredProviders.some(p => p.preset === "deepseek" || p.id === "deepseek");
+        const hasOpenCodeGoPreset = configuredProviders.some(p => p.preset === "opencode-go" || p.id === "opencode-go");
+
+        // 把某个供应商的余额草稿预载进 form/editing，供弹窗「余额设置」页直接编辑。
+        //
+        // 关键：**未配置余额的供应商也必须带上一份可保存的完整草稿**。
+        // 历史实现直接 setForm(blankForm)，而 blankForm.id 是空串，
+        // 保存时 Host 的 validateProvider 会以 "invalid provider identity" 拒绝，
+        // 用户看到的就是「点保存报错、表单还空白」。这里按模型页信息补齐身份与地址：
+        //   id   → 绑定路由优先，否则用模型页 provider id（两者都满足 Host 的 isId 规则）
+        //   name → 模型页显示名，兜底用 id
+        //   endpointBase → 模型页 baseURL，供用户只追加路径（如 /usage）
+        //   credentialRef → 复用模型页凭据，无需重新输入 API Key
+        const initAdvancedBalanceForm = (provider) => {
+          const configured = provider ? configuredProviders.find(item => item.id === provider.id) : null;
+          const route = provider ? (boundRoute(provider.id) || provider.id) : "";
+          const mp = provider ? modelProviders.find(m => m.id === route || m.id === provider.id) : null;
+
+          if (configured) {
+            setForm({
+              ...configured,
+              apiKey: "",
+              headersText: toHeadersText(configured),
+              method: configured.method || "GET",
+              route: boundRoute(configured.id),
+              endpointBase: mp?.baseURL || "",
+              timeoutSeconds: configured.timeoutSeconds ?? 10,
+              queryIntervalMinutes: configured.queryIntervalMinutes ?? 30,
+              balanceEnabled: configured.balanceEnabled !== false,
+              valueDivisor: configured.valueDivisor ?? (configured.id === "neco" ? 500000 : 1),
+              conversionEnabled: Number(configured.valueDivisor ?? (configured.id === "neco" ? 500000 : 1)) !== 1
+            });
+            setEditing(boundRoute(configured.id) || configured.id);
+            return true;
+          }
+
+          if (!provider) {
+            setForm(blankForm);
+            setEditing(null);
+            return false;
+          }
+
+          setForm({
+            ...blankForm,
+            id: route,
+            name: mp?.name || provider.name || route,
+            route,
+            endpointBase: mp?.baseURL || "",
+            // 地址留空由用户按需填写（模型页 baseURL 常与余额接口不同路径）。
+            endpoint: "",
+            apiKey: "",
+            // 直接复用模型页凭据，省去用户再输一遍 API Key；
+            // 有了它，用户只补一个余额地址即可保存成功。
+            credentialRef: mp?.credentialRef || ""
+          });
+          setEditing(route);
+          return false;
+        };
+
+        // 模型设置是本插件的最高频操作，直接在本卡片内就地展开，不经弹窗、不进 Tab。
+        // 它读的是 DSH 的 LLM settings 命名空间，与余额 config.json 无关，
+        // 因此不需要（也不应该）先走余额编辑保存。
+        // provider 由卡片传入，因此这里必然非空；再点一次同一张卡片即收起。
+        const openModels = (provider) => {
+          setModelsExpandedFor(current => (current === provider.id ? null : provider.id));
+          setLlmRefreshKey(key => key + 1);
+        };
+
+        // 余额设置与健康监测仍留在原来的「高级设置」弹窗里。
         const openAdvanced = (sourceId = null, provider = null) => {
           setAdvancedProvider(provider);
+          initAdvancedBalanceForm(provider);
           const savedSources = config?.externalStatusSources || [];
           const sourceScore = item => Number(Boolean(item.modelListPath)) + Object.values(item.fields || {}).filter(Boolean).length + (Array.isArray(item.customFields) ? item.customFields.length : 0);
           const providerSources = provider ? savedSources.filter(item => item.providerId === provider.id) : [];
@@ -3194,12 +3474,32 @@ window.__ModuleLoader__.load({
             setExternalEditing("__new");
             setExternalPreview(null);
           }
-          setAdvancedTab("models");
+          setAdvancedTab("balance");
           setExternalTestState("idle");
           setExternalTestMessage("");
-          // 弹窗每次打开都刷新模型目录，模型页新增/删除的模型在此同步可见。
-          setLlmRefreshKey(key => key + 1);
+          // 两个 tab 的测试状态必须对称重置。历史实现只清了健康监测那侧，
+          // 于是上一次「测试失败：provider response too large」这类红字会跟着
+          // 下一次打开一起出现——用户刚保存成功，再进来却看到旧报错，很像「没保存上」。
+          // 必须无条件清空：不能挂在 sourceForProvider 之类的健康页变量上。
+          setTesting(false);
+          setTestResult(null);
+          setMessage("");
           setAdvancedOpen(true);
+        };
+
+        // 「余额设置」页。弹窗只从供应商卡片上的「余额设置」按钮进入，因此 provider 必然存在；
+        // 未纳入余额配置的供应商已在 initAdvancedBalanceForm 里被填成一份可保存的新表单，
+        // 所以这里只留一个兜底分支，不做额外的空状态引导。
+        const advancedBalanceTab = () => {
+          if (!advancedProvider) {
+            return h(
+              "div",
+              { className: "db-modal-empty" },
+              h("strong", null, "未获取到供应商上下文"),
+              h("p", null, "请从供应商卡片上的「余额设置」按钮进入。")
+            );
+          }
+          return inlineEditor();
         };
 
         const advancedModal =
@@ -3210,19 +3510,20 @@ window.__ModuleLoader__.load({
               className: "db-modal-backdrop",
               role: "presentation",
               onClick: event => {
-                if (event.target === event.currentTarget) setAdvancedOpen(false);
+                if (event.target === event.currentTarget) closeAdvanced();
               }
             },
             h(
               "div",
-              { className: "db-modal", role: "dialog", "aria-modal": "true", "aria-label": "高级设置" },
+              { className: "db-modal", role: "dialog", "aria-modal": "true", "aria-label": "余额设置" },
               h(
                 "div",
                 { className: "db-modal-head" },
-                h("strong", null, `高级设置${advancedProvider?.name ? ` · ${advancedProvider.name}` : ""}`),
+                h("strong", null, `余额设置${advancedProvider?.name ? ` · ${advancedProvider.name}` : ""}`),
+                h("div", { className: "db-spacer" }),
                 h(
                   "button",
-                  { className: "db-modal-close", type: "button", onClick: () => setAdvancedOpen(false), "aria-label": "关闭高级设置", title: "关闭" },
+                  { className: "db-modal-close", type: "button", onClick: closeAdvanced, "aria-label": "关闭余额设置", title: "关闭" },
                   h(
                     "svg",
                     { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" },
@@ -3233,43 +3534,35 @@ window.__ModuleLoader__.load({
               h(
                 "div",
                 { className: "db-modal-tabs" },
-                h("button", { className: advancedTab === "models" ? "active" : "", type: "button", onClick: () => setAdvancedTab("models") }, "模型设置"),
+                h("button", { className: advancedTab === "balance" ? "active" : "", type: "button", onClick: () => setAdvancedTab("balance") }, "余额设置"),
                 h("button", { className: advancedTab === "health" ? "active" : "", type: "button", onClick: () => setAdvancedTab("health") }, "健康监测")
               ),
               h(
                 "div",
                 { className: "db-modal-content" },
-                advancedTab === "models"
-                  ? h(ModelSettingsTab, { provider: advancedProvider, modelProviders, boundRoute, refreshKey: llmRefreshKey })
-                  : (externalEditing && externalEditor())
+                advancedTab === "balance" ? advancedBalanceTab() : (externalEditing && externalEditor())
               ),
-              advancedTab === "health" &&
-                externalEditing &&
-                h(
-                  "div",
-                  { className: "db-modal-footer" },
-                  externalSaveMessage && h("p", { className: "db-save-message", role: "alert" }, externalSaveMessage),
-                  h("button", { className: "db-quiet", type: "button", onClick: () => { externalPreviewLoadGeneration.current += 1; setAdvancedOpen(false); setExternalEditing(null); setExternalSaveMessage(""); } }, "取消"),
-                  h("button", { className: "db-primary", type: "submit", form: "db-external-form" }, "保存监测源")
-                )
+              // 两页共用同一种页脚：都渲染为 .db-modal-footer（.db-modal-content 的兄弟节点），
+              // 因此都固定在弹窗底部、不随内容滚动，且样式完全一致。
+              advancedTab === "balance"
+                ? advancedBalanceFooter()
+                : externalEditing &&
+                  h(
+                    "div",
+                    { className: "db-modal-footer" },
+                    externalSaveMessage && h("p", { className: "db-save-message", role: "alert" }, externalSaveMessage),
+                    h("button", { className: "db-quiet", type: "button", onClick: closeAdvanced }, "取消"),
+                    h("button", { className: "db-primary", type: "submit", form: "db-external-form" }, "保存监测源")
+                  )
             )
           );
-
-        // Map configured providers to their model provider entry if applicable
-        const configuredProviders = config.providers || [];
-        const configuredIds = new Set(configuredProviders.map(p => p.id));
-        const configuredRoutes = new Set(Object.keys(config.bindings || {}));
-
-        // Candidate model providers not yet configured
-        const unconfiguredModelProviders = modelProviders.filter(mp => !configuredIds.has(mp.id) && !configuredRoutes.has(mp.id));
-        const hasDeepSeekPreset = configuredProviders.some(p => p.preset === "deepseek" || p.id === "deepseek");
-        const hasOpenCodeGoPreset = configuredProviders.some(p => p.preset === "opencode-go" || p.id === "opencode-go");
 
         const providerCard = (provider) => {
           const route = boundRoute(provider.id);
           const mp = modelProviders.find(m => m.id === route || m.id === provider.id);
           const meta = balanceMeta(provider.id);
-          const isCurrentEditing = editing === (route || provider.id);
+          // 同一时刻只允许一张卡片展开模型区，避免多个 ModelSettingsTab 同时拉取目录。
+          const modelsExpanded = modelsExpandedFor === provider.id;
 
           return h(
             "div",
@@ -3291,12 +3584,45 @@ window.__ModuleLoader__.load({
               ),
               OFFICIAL_PRESETS.has(provider.preset) && h("span", { className: "db-tag" }, "官方内置"),
               h("div", { className: "db-spacer" }),
-              h("button", { className: "db-quiet", type: "button", onClick: () => openAdvanced("__new", provider), title: "打开高级设置" }, "高级设置"),
-              h("button", { className: "db-quiet", type: "button", onClick: () => beginEdit(provider) }, isCurrentEditing ? "收起" : "编辑"),
+              h(
+                "button",
+                {
+                  className: `db-quiet db-models-open${modelsExpanded ? " active" : ""}`,
+                  type: "button",
+                  "aria-expanded": modelsExpanded,
+                  // 模型配置是最高频操作：直接在本卡片内就地展开，不经弹窗、不进 Tab；
+                  // 余额编辑与健康监测退到相邻的「余额设置」里。
+                  onClick: () => openModels(provider),
+                  title: modelsExpanded ? "收起模型设置" : "展开模型设置"
+                },
+                modelsExpanded ? "收起模型" : "模型设置"
+              ),
+              h(
+                "button",
+                {
+                  className: "db-quiet",
+                  type: "button",
+                  onClick: () => openAdvanced("__new", provider),
+                  title: "打开余额设置"
+                },
+                "余额设置"
+              ),
               h("button", { className: "db-delete", type: "button", onClick: () => remove(provider.id) }, "删除")
             ),
-            h("div", { className: "db-row-meta" }, ...(Array.isArray(meta) ? meta : meta ? [meta] : [])),
-            isCurrentEditing && inlineEditor()
+            h("div", { className: "db-row-meta" }, ...(Array.isArray(meta) ? meta : [meta].filter(Boolean))),
+            // 模型设置就地展开在本卡片下方，供应商上下文由「从哪张卡片展开」决定，
+            // 因此这里不需要任何供应商下拉。
+            modelsExpanded &&
+              h(
+                "div",
+                { className: "db-models-inline", "data-provider": provider.id },
+                h(ModelSettingsTab, {
+                  provider,
+                  modelProviders,
+                  boundRoute,
+                  refreshKey: llmRefreshKey
+                })
+              )
           );
         };
 
@@ -3368,7 +3694,7 @@ window.__ModuleLoader__.load({
                 type: "button",
                 onClick: () => beginAdd(null)
               },
-              h("span", { className: "db-import-item-name" }, "+ 新建自定义 HTTPS 供应商"),
+              h("span", { className: "db-import-item-name" }, "+ 新建自定义余额供应商"),
               h("span", { className: "db-import-item-desc" }, "JSON 路径")
             )
           );
@@ -3534,6 +3860,12 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       state.connection = ctx.get("connection");
       state.sessions = ctx.get("sessions");
+      // Remote 命名空间在 DSH 0.1.5 起是独立 cordis 服务；命名空间尚未挂载时保持
+      // null，由调用点给出可读报错，而不是在解引用处抛 TypeError。
+      state.remote = {
+        llm: ctx.get("remote.llm") ?? null,
+        settings: ctx.get("remote.settings") ?? null
+      };
       ensureSettingsStyle();
 
       ctx.effect(() => {
@@ -3576,7 +3908,10 @@ window.__ModuleLoader__.load({
       }, "dsh-balance-quota: status bar");
 
       ctx.effect(() => ctx.slots.inject("conversation.composer.dock", () => ctx.slots.register({ name: "conversation.composer.dock", id: "dsh-balance-quota", order: 40 }, BalanceDock)), "dsh-balance-quota: composer dock");
-      ctx.effect(() => ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({ name: "settings.plugin.item", key: "dsh-balance-quota", id: "dsh-balance-quota", order: 40, label: () => "供应商状态" }, BalancePluginCard)), "dsh-balance-quota: settings");
+      // DSH >= 0.1.5-rc.2: `settings.plugin.item` is a keyed slot whose key must equal the
+      // Host settings namespace. The section only dispatches keys that `settingsScope.describe()`
+      // serves, so this card renders only while the Host has registered that namespace.
+      ctx.effect(() => ctx.slots.inject("settings.plugin.item", () => ctx.slots.register({ name: "settings.plugin.item", key: "dsh-balance-quota" }, BalancePluginCard)), "dsh-balance-quota: settings");
     }
 
     exports.apply = apply;

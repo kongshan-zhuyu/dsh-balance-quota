@@ -8,3 +8,4 @@ artifacts/
 *.tgz
 .codegraph/
 .dsh-vision-toolkit/
+.workbuddy/

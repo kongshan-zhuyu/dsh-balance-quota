@@ -14,7 +14,9 @@
 
 [GitHub English README](../../README.md) · [GitHub 中文 README](../../README.zh-CN.md)
 
-> 当前版本：**0.3.3** · 上一个 npm 版本：**0.3.2**
+> 当前版本：**0.3.5** · 上一个 npm 版本：**0.3.3**
+
+> **DSH 兼容性**：0.3.4 起要求 DSH **0.1.5-rc.1 或更高**（`@deepseek-ai/dsh-settings` ≥ `0.1.5-rc.2`）。DSH 0.1.4 及更早版本请使用 0.3.3。
 
 ## 安装
 
@@ -30,7 +32,7 @@ dsh web
 ## 功能
 
 - DeepSeek 余额与 OpenCode Go 额度官方方案；
-- 自定义公网 HTTPS 余额接口和安全 JSON 路径；
+- 自定义公网 HTTP/HTTPS 余额接口和安全 JSON 路径；
 - 默认供应商、会话独立记忆、一键切换、手动刷新；
 - 保存前测试余额配置草稿，不写入正式配置或凭据；
 - 高级模型目录、上下文窗口、输入能力和推理等级配置；
@@ -108,7 +110,7 @@ dsh web
 切换到 **健康监测**：
 
 1. 勾选「启用健康监测」；
-2. 填写公网 HTTPS、GET、JSON 接口；
+2. 填写公网 HTTP/HTTPS、GET、JSON 接口；
 3. 点击 **测试**；
 4. 左侧出现完整 JSON 树；
 5. 右侧出现实时状态预览。
@@ -251,12 +253,12 @@ TTFT：     $.avg_ttft_ms
 
 ### 查询失败
 
-确认接口为公网 HTTPS、没有重定向，credential ref 可解析，JSON 路径与响应一致。插件会主动拒绝私网、回环地址和内部域名。
+确认接口为公网 HTTP/HTTPS、没有重定向，credential ref 可解析，JSON 路径与响应一致。插件会主动拒绝私网、回环地址和内部域名。
 
 ## 安全
 
 - API Key 由 DSH `credentials` 服务管理，不进入浏览器配置；
-- 只允许公网 HTTPS；
+- 只允许公网 HTTP/HTTPS（可设 `DSH_BALANCE_ALLOW_HTTP=0` 强制仅 HTTPS）；
 - DNS 解析后固定公网 IP；
 - 拒绝私网/回环地址、重定向、危险请求头和超大响应；
 - JSON 路径拒绝 `__proto__`、`constructor`、`prototype`。

@@ -3,9 +3,10 @@ import { readJsonPath, readJsonPathExpr, resolveCurrency } from "./json-path.js"
 import { HttpError, formatProviderError } from "./http-utils.js";
 import { credentialRefForProvider, ownsCredential, readLegacyMacKeychain, removeLegacyMacKeychain } from "./security.js";
 import { isId } from "./validate.js";
+import { BoundedCache } from "./bounded-cache.js";
 
 const DEFAULT_QUERY_INTERVAL_MINUTES = 30;
-export const cache = new Map();
+export const cache = new BoundedCache(128);
 
 export function refreshDue(provider, syncedAt, now = Date.now()) {
   if (provider?.balanceEnabled === false) return false;
@@ -43,18 +44,18 @@ export async function query(provider, credentials, force = false, writeCache = t
   const existing = cache.get(provider.id);
   if (writeCache && !force && cacheMs > 0 && existing && Date.now() - existing.at < cacheMs) return existing.value;
   const secret = draftSecret || await resolveProviderCredential(provider, credentials);
-  if (!secret) throw new HttpError(502, "credential is missing in DSH credentials");
+  if (!secret) throw new HttpError(502, "缺少可用的 API Key 或凭据引用，请在余额设置中填写凭据");
   const headers = { accept: "application/json", ...provider.headers };
   headers[provider.authHeader] = provider.auth === "bearer" ? `Bearer ${secret}` : secret;
   const response = await requestPinnedJson(provider, headers);
   if (response.status < 200 || response.status >= 300) throw new HttpError(502, formatProviderError(response.status, response.text));
   const text = response.text;
   let data;
-  try { data = JSON.parse(text); } catch { throw new HttpError(502, "provider returned invalid JSON"); }
+  try { data = JSON.parse(text); } catch { throw new HttpError(502, "供应商返回的不是合法 JSON，请确认该地址返回 JSON 数据"); }
   const deepSeekBalance = provider.preset === "deepseek" && Array.isArray(data.balance_infos) ? data.balance_infos.find((item) => item?.currency === provider.currency) || data.balance_infos[0] : undefined;
   const rawAvailable = Number(deepSeekBalance?.total_balance ?? readJsonPathExpr(data, provider.responsePath));
   const available = provider.preset === "opencode-go" ? undefined : rawAvailable / Math.max(1, Number(provider.valueDivisor || 1));
-  if (provider.preset !== "opencode-go" && !Number.isFinite(available)) throw new HttpError(502, "balance response does not contain a numeric value");
+  if (provider.preset !== "opencode-go" && !Number.isFinite(available)) throw new HttpError(502, "余额响应中没有可用的数值（请核对余额 JSON 路径）");
   const usageWindows = provider.usageWindows.map((window) => ({ type: window.type, percent: Math.max(0, Math.min(100, Number(readJsonPath(data, window.percentPath)) || 0)), resetAt: String(readJsonPath(data, window.resetAtPath) || "") }));
   const value = { id: provider.id, name: provider.name, ...(available === undefined ? {} : { available, currency: resolveCurrency(data, provider.currency) }), usageWindows, syncedAt: new Date().toISOString(), status: "ok" };
   if (writeCache) cache.set(provider.id, { at: Date.now(), value });

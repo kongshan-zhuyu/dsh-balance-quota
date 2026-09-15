@@ -15,7 +15,9 @@
 
 `dsh-balance-quota` displays provider balance or quota below the DSH chat composer. It can also consume third-party JSON status APIs and show model health, availability, TTFT, response time, history, and custom metrics.
 
-> Current development version: **0.3.3** · Previous npm release: **0.3.2**
+> Current development version: **0.3.5** · Previous npm release: **0.3.3**
+
+> **DSH compatibility**: 0.3.4 requires DSH **0.1.5-rc.1 or newer** (`@deepseek-ai/dsh-settings` ≥ `0.1.5-rc.2`), which removed the `settingsNamespace()` helper in favour of passing the namespace string straight to `settings.register()`. Use 0.3.3 on DSH 0.1.4 and older.
 
 ## Complete feature map
 
@@ -106,7 +108,7 @@ Setup flow:
 
 1. Enable health monitoring.
 2. Select a custom request.
-3. Enter a public HTTPS GET JSON endpoint.
+3. Enter a public HTTP or HTTPS GET JSON endpoint.
 4. Click **测试 (Test)**.
 5. Inspect the full JSON tree on the left.
 6. Bind fields and preview status on the right.
@@ -211,12 +213,12 @@ Bind the model list first, then select a field inside a model item. Name and pat
 
 ### A query fails
 
-Confirm the endpoint is public HTTPS without redirects, the credential ref resolves, and JSON paths match the response. Private, loopback, and internal destinations are rejected.
+Confirm the endpoint is public HTTP(S) without redirects, the credential ref resolves, and JSON paths match the response. Private, loopback, and internal destinations are rejected.
 
 ## Security boundary
 
 - API keys are managed by DSH `credentials` and never enter browser configuration.
-- Only public HTTPS is allowed.
+- Only public HTTP/HTTPS is allowed (set `DSH_BALANCE_ALLOW_HTTP=0` to require TLS).
 - Resolved public IPs are pinned to reduce DNS-rebinding risk.
 - Private/loopback addresses, redirects, dangerous headers, and oversized responses are rejected.
 - JSON paths reject `__proto__`, `constructor`, and `prototype`.

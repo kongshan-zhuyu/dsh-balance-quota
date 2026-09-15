@@ -15,14 +15,16 @@
 
 `dsh-balance-quota` 在 DSH 对话输入框下方展示模型供应商余额或额度，并可接入第三方 JSON 状态接口，查看模型健康状态、可用率、TTFT、响应耗时、历史记录和自定义指标。
 
-> 当前开发版本：**0.3.3** · 上一个 npm 发布版本：**0.3.2**
+> 当前开发版本：**0.3.5** · 上一个 npm 发布版本：**0.3.3**
+
+> **DSH 兼容性**：0.3.4 起要求 DSH **0.1.5-rc.1 或更高**（`@deepseek-ai/dsh-settings` ≥ `0.1.5-rc.2`）。该版本移除了 `settingsNamespace()` 辅助函数，改为直接向 `settings.register()` 传入命名空间字符串。DSH 0.1.4 及更早版本请使用 0.3.3。
 
 ## 功能全览
 
 | 模块 | 功能 |
 | --- | --- |
 | 官方方案 | DeepSeek 余额、OpenCode Go 滚动/周/月额度 |
-| 自定义余额 | 公网 HTTPS、GET/无请求体 POST、自定义请求头、超时和刷新间隔 |
+| 自定义余额 | 公网 HTTP/HTTPS、GET/无请求体 POST、自定义请求头、超时和刷新间隔 |
 | JSON 取值 | 属性路径、数组索引、`?.` 可选链、最多 5 个 `??` 回退分支 |
 | 金额处理 | 固定/动态币种、金额除数、余额配置草稿测试 |
 | 状态栏 | 输入框下方显示余额、更新时间、强制刷新和健康入口 |
@@ -36,7 +38,7 @@
 | 自定义字段 | 添加错误率、空回响、常见报错等任意模型指标 |
 | 缓存与刷新 | Host 共享余额缓存、健康 JSON 预览缓存、页面后台暂停刷新 |
 | 凭据安全 | 复用 DSH credential ref，API Key 不进入浏览器配置 |
-| 网络安全 | 公网 HTTPS、DNS 固定、防 DNS 重绑定、私网/重定向拦截 |
+| 网络安全 | 公网 HTTP/HTTPS、DNS 固定、防 DNS 重绑定、私网/重定向拦截 |
 
 ## 安装
 
@@ -121,7 +123,7 @@ dsh plugin --profile web list
 
 1. 勾选 **启用健康监测**；
 2. 选择自定义请求；
-3. 填写公网 HTTPS、GET、JSON 接口；
+3. 填写公网 HTTP/HTTPS、GET、JSON 接口；
 4. 点击 **测试**；
 5. 左侧查看完整 JSON 树；
 6. 右侧绑定字段并实时预览；
@@ -234,12 +236,12 @@ offline → 失败
 
 ### 查询失败
 
-确认接口为公网 HTTPS、没有重定向，credential ref 有效，JSON 路径与实际响应一致。插件会拒绝私网、回环地址和内部域名。
+确认接口为公网 HTTP/HTTPS、没有重定向，credential ref 有效，JSON 路径与实际响应一致。插件会拒绝私网、回环地址和内部域名。
 
 ## 安全边界
 
 - API Key 由 DSH `credentials` 服务管理，不进入浏览器配置；
-- 只允许公网 HTTPS；
+- 只允许公网 HTTP/HTTPS（可设 `DSH_BALANCE_ALLOW_HTTP=0` 强制仅 HTTPS）；
 - DNS 解析后固定公网 IP，降低 DNS 重绑定风险；
 - 拒绝私网/回环地址、重定向、危险请求头和超大响应；
 - JSON 路径拒绝 `__proto__`、`constructor`、`prototype`；

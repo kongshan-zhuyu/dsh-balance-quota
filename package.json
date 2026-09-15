@@ -1,7 +1,7 @@
 {
   "name": "dsh-balance-plugin",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.7",
   "description": "Development workspace for the DSH Balance plugin",
   "type": "module",
   "packageManager": "pnpm@11.22.0",
@@ -19,7 +19,14 @@
     "test": "node --test packages/dsh-host-balance/lib/security.test.js packages/dsh-balance/test/security.test.js packages/dsh-balance/test/external-status.test.js packages/dsh-balance/test/external-preview-cache.test.js",
     "pack:check": "node scripts/pack-check.mjs",
     "dev:install": "node scripts/install.mjs",
-    "verify": "pnpm check && pnpm test && pnpm pack:check"
+    "dev:verify-ui": "node scripts/verify-ui.mjs",
+    "verify": "pnpm check && pnpm test && pnpm pack:check",
+    "dev:audit-tabs": "node scripts/audit-tabs.mjs",
+    "dev:verify-flow": "node scripts/verify-balance-flow.mjs",
+    "dev:verify-unconfigured": "node scripts/verify-balance-unconfigured.mjs",
+    "dev:verify-order": "node scripts/verify-provider-order.mjs",
+    "dev:verify-error": "node scripts/verify-error-display.mjs",
+    "dev:verify-import": "node scripts/verify-import-flow.mjs"
   },
   "devDependencies": {
     "playwright": "^1.62.1"
