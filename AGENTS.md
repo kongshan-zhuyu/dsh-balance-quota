@@ -278,6 +278,21 @@ React state 里的 `credentialRef`，拿到空数组却断言通过）。
   `closest(".db-provider-card")` 必须非空；余额设置才是弹窗，用
   `.db-modal[aria-label="余额设置"]` 定位。
 
+### 6.2 发布流程（tag 触发自动 Release）
+
+1. 版本对齐：`packages/dsh-balance/package.json` 版本号与 CHANGELOG 双文件的
+   `## X.Y.Z - Released` 小节同步，`pnpm release:check --tag=vX.Y.Z` 校验通过。
+2. 提交并推送 main 后打注解 tag（message 用 `dsh-balance-quota vX.Y.Z` 风格），
+   `git push origin main vX.Y.Z`。
+3. **推送 tag 会触发 `.github/workflows/release.yml`**：在 CI 里重跑 `release:check` 与
+   `verify`，全部通过后自动创建/更新 GitHub Release（`softprops/action-gh-release`，已存在则更新）。
+4. Release 正文优先取 **`release-notes/vX.Y.Z.md`**（人工分组摘要：亮点 / 体验改进 / 修复）；
+   不存在时回落 CHANGELOG 对应小节全文。需要简约说明就在打 tag 前提交该文件。
+5. ⚠️ **改动依赖后必须重新生成并提交 `pnpm-lock.yaml`**：CI 用 `--frozen-lockfile` 安装，
+   lockfile 与 package.json 的 specifiers 不一致会拦下全部工作流（v0.3.7 时
+   `@deepseek-ai/dsh-settings` 曾因此三工作流齐挂、Release 页空白）。
+6. 发布页正文的事后修改用 `gh release edit vX.Y.Z --notes-file <文件>`。
+
 ---
 
 ## 🧩 7. DSH 平台兼容性（升级 DSH 时必读）

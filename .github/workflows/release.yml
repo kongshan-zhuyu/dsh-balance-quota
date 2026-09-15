@@ -26,15 +26,19 @@ jobs:
       - run: pnpm release:check --tag=${{ github.ref_name }}
       - run: pnpm verify
       - name: Extract release notes
-        id: notes
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          awk -v version="$version" '
-            $0 ~ "^## " version "( |$)" { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > release-notes.md
+          curated="release-notes/${GITHUB_REF_NAME}.md"
+          if [ -s "$curated" ]; then
+            cp "$curated" release-notes.md
+          else
+            awk -v version="$version" '
+              $0 ~ "^## " version "( |$)" { found=1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md > release-notes.md
+          fi
           test -s release-notes.md
       - uses: softprops/action-gh-release@v2
         with:
