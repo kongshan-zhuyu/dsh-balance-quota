@@ -4,9 +4,17 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v0.3.7）"
+        required: true
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
@@ -14,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ inputs.tag || github.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 11.22.0
@@ -23,13 +31,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm release:check --tag=${{ github.ref_name }}
+      - run: pnpm release:check --tag=${{ env.RELEASE_TAG }}
       - run: pnpm verify
       - name: Extract release notes
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          curated="release-notes/${GITHUB_REF_NAME}.md"
+          version="${RELEASE_TAG#v}"
+          curated="release-notes/${RELEASE_TAG}.md"
           if [ -s "$curated" ]; then
             cp "$curated" release-notes.md
           else
@@ -43,6 +51,33 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           body_path: release-notes.md
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_TAG }}
+          tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: false
+
+  npm-publish:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Publish to npm
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN 未配置，跳过 npm 发布"
+            exit 0
+          fi
+          pnpm --filter dsh-balance-quota publish --no-git-checks

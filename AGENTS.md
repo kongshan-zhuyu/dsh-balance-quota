@@ -292,6 +292,12 @@ React state 里的 `credentialRef`，拿到空数组却断言通过）。
    lockfile 与 package.json 的 specifiers 不一致会拦下全部工作流（v0.3.7 时
    `@deepseek-ai/dsh-settings` 曾因此三工作流齐挂、Release 页空白）。
 6. 发布页正文的事后修改用 `gh release edit vX.Y.Z --notes-file <文件>`。
+7. **npm 发布同属 release.yml**：`npm-publish` job 在 Release job 通过后执行
+   `pnpm --filter dsh-balance-quota publish`，凭据取仓库 secret `NPM_TOKEN`
+   （npmjs.com 生成 Automation/Granular token，`gh secret set NPM_TOKEN` 配置）。
+   secret 未配置时该步骤打印提示并跳过（exit 0），不会挂工作流。
+8. **补发历史版本**用 `gh workflow run release.yml -f tag=vX.Y.Z`
+   （workflow_dispatch 入口，checkout 该 tag、校验、更新 Release 并发 npm）。
 
 ---
 
